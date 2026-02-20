@@ -12,10 +12,10 @@ If you have any questions about the files in this repository, please contact Jon
 ## Setup
 
 ### System Requirements
-```> sessionInfo()```
-```R version 4.2.0 (2022-04-22)```
-```Platform: aarch64-apple-darwin20 (64-bit)```
-```Running under: macOS Monterey 12.2.1```
+```> sessionInfo()```  
+```R version 4.2.0 (2022-04-22)```  
+```Platform: aarch64-apple-darwin20 (64-bit)```  
+```Running under: macOS Monterey 12.2.1```  
 
 All analyses were run using R version 4.2.0 (2022-04-22) on Mac OS Monterey (12.2.1) using the RStudio IDE (https://www.rstudio.com). In this repository we have used the ```renv``` package to archive the package versions so that you and reproduce the exact compute environment, should you wish to do so.
 
