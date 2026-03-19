@@ -27,11 +27,11 @@ All analyses were run using R version 4.2.0 (2022-04-22) on Mac OS Monterey (12.
 The installation time should be < 10 minutes total on a typical desktop computer.
 To reproduce all analyses in the paper, we recommend that you:
 
-Clone the GitHub repository to your computer using git clone https://github.com/ariktha/mordor-spillover.git in the terminal
+Clone the GitHub repository to your computer using git clone https://github.com/jonhwan/VenetianPlague.git in the terminal
 
 Recreate the exact package environment using the renv package.
 
-You can do this by opening the R project file (mordor-spillover.Rproj) in RStudio, loading the renv package, and typing renv::restore() to restore the package environment from the projects renv.lock file.
+You can do this by opening the R project file (VenetianPlague_Entropy.Rproj) in RStudio, loading the renv package, and typing renv::restore() to restore the package environment from the projects renv.lock file.
 
 Download the public data from the OSF repository by running the script 00-download-public-data.R.
 
