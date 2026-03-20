@@ -31,11 +31,11 @@ Clone the GitHub repository to your computer using git clone https://github.com/
 
 Recreate the exact package environment using the renv package.
 
-You can do this by opening the R project file (VenetianPlague_Entropy.Rproj) in RStudio, loading the renv package, and typing renv::restore() to restore the package environment from the projects renv.lock file.
+You can do this by opening the R project file (VenetianPlague_Entropy.Rproj) in RStudio, loading the ```renv``` package, and typing ```renv::restore()``` to restore the package environment from the projects ```renv.lock``` file.
 
-Download the public data from the OSF repository by running the script 00-download-public-data.R.
+Download the public data from the OSF repository by running the script ```00-download-public-data.R```.
 
-All of the analysis scripts can be run sequentially using the script run-all.R.
+All of the analysis scripts can be run sequentially using the script ```run-all.R```.
 
 ## Contents
 
