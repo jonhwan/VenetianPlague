@@ -1,0 +1,2622 @@
+---
+title: "Primary Analysis"
+author: "Jonathan Hwang"
+date: "`r Sys.Date()`"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+# Summary
+
+This notebook cleans the mortality data from the 1630-1631 Venetian Plague, calculates the Shannon entropy and negentropy of the quantile function and the PDF, and uses bootstrapping to find 95% confidence intervals.
+
+## Initialization
+
+```{r setup, include=TRUE, warning=FALSE,message=FALSE}
+renv::init()
+
+library(tidyverse)
+library(rootSolve)
+library(data.table)
+library(msos)
+library(entropy)
+library(simboot)
+library(MCPAN)
+library(boot)
+library(gridExtra)
+library(cowplot)
+library(ggpubr)
+library(progress)
+library(renv)
+library(gridExtra)
+library(Hmisc)
+library(lubridate)
+library(tmap)
+library(ggplotify)
+library(sf)
+sf_use_s2(FALSE)
+
+# Clear environment
+rm(list = ls())
+
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+First, we import all of the csv files.
+
+```{r import}
+# Mortality data for all parishes from January 1, 1629 to December 31, 1631.
+all <- read.csv("ALL_utf.csv")
+city_peaks <- read.csv("city_cases_baseline_removed.csv")
+filled <- read.csv("filledna_full_ts.csv")
+
+# Geographical data for locations of Venetian parishes. 
+# Note that geo_df doesn't have S.Giacomo.dell'Orio and Angelo.Rafael is blank.
+geo_df <- read.csv("geo_df.csv") 
+
+# Venetian census data from 1696 containing parish populations
+population <- read.csv("ParishPopulations.csv")
+
+# 1586 census data containing which parishes belong to which sestieri 
+sestiere_pre <- read.csv("sestiereDataPre.csv")
+
+# 1696 census data containing which parishes belong to which sestieri 
+sestiere_post <- read.csv("SestiereDataPost.csv")
+```
+
+## Data Cleaning
+
+Then, we perform preliminary cleaning.
+
+```{r first_pass_cleaning}
+# Fix the Dates on all
+all$Date <- sub("2029", "1629", all$Date)
+all$Date <- sub("2030", "1630", all$Date)
+all$Date <- sub("2031", "1631", all$Date)
+all$Date <- as.Date(all$Date, format="%m/%d/%Y")
+
+# Fix artifacts for column names
+colnames(all) <- sub("S.", "S", colnames(all))
+
+# Convert mortality data in all into integer types
+for(column in 1:ncol(all)){
+  if(column == 1){
+    next
+  }
+  if(!(is.integer(all[,column]))){
+    all[,column] = as.integer(all[,column])
+  }
+}
+
+# Fix the Dates on filled
+colnames(filled)[1] <- "Date"
+filled$Date <- as.Date(filled$Date, format="%Y-%m-%d")
+
+# Fix the parish name artifacts in filled (import_csv replaces spaces with periods)
+colnames(filled) <- sub("S.", "S", colnames(filled))
+
+# Convert mortality data in filled into integer types
+for(column in 1:ncol(filled)){
+  if(column == 1){
+    next
+  }
+  if(!(is.integer(filled[,column]))){
+    filled[,column] = as.integer(filled[,column])
+  }
+}
+
+# Fix the Dates on city_peaks
+colnames(city_peaks)[1] <- "Date"
+city_peaks$Date <- sub(" 00:00:00", "", city_peaks$Date)
+city_peaks$Date <- as.Date(city_peaks$Date, format="%Y-%m-%d")
+
+# Fix geo_df
+colnames(geo_df)[1] <- "Parish"
+geo_df$Parish <- gsub("[[:space:]]", ".", geo_df$Parish)
+geo_df$Parish <- sub("S.", "S", geo_df$Parish)
+
+# Get rid of Angelo.Rafael because it has no lat/long data
+# geo_df <- geo_df[!grepl("Angelo.Rafael",geo_df$Parish),]
+
+# Fix population
+population$Parish <- gsub("[[:space:]]", ".", population$Parish)
+population$Parish <- sub("S.", "S", population$Parish)
+
+# What are the missing cities in geo_df?
+setdiff(geo_df$Parish, colnames(filled))
+
+# What are the missing cities in population?
+filled <- filled[, -match(c("S.Marcilian"), colnames(filled))] # Marcilian only exists in the population_pre dataset.
+
+# Remove columns (parishes) in filled that exclusively contain NAs
+all_nas <- c()
+for(col in 1:ncol(filled)){
+  if(sum(is.na(filled[,col])) == length(filled[,col])){
+    all_nas <- c(all_nas, col)
+  }
+}
+if(length(all_nas) > 0){
+  filled <- filled[,-all_nas]
+}
+
+# Remove parishes in filled that aren't in the population dataset
+missing_parishes <- c()
+for(p in 1:length(colnames(filled))){
+  if(!(colnames(filled)[p] %in% population$Parish) & colnames(filled)[p] != "Date"){
+    missing_parishes <- c(missing_parishes,p)
+  }
+}
+if(length(missing_parishes) > 0){
+  filled <- filled[,-missing_parishes]
+}
+```
+
+The code below removes San Marco from our analysis. In our main analysis, we exclude it, but in the supplementary information, we include San Marco as a form of sensitivity analysis.
+
+```{r remove_Marco}
+# Get rid of S. Marco, the outlier
+# filled <- filled[,-match("S.Marco",colnames(filled))]
+```
+
+Import csv files containing population data from Venetian censuses in 1509, 1551, 1581, 1586, and 1696 for each parish.
+
+```{r import_population_csvs}
+population_pre <- read.csv("ParishPopulationsPre.csv")
+population_post <- read.csv("ParishPopulationsPost.csv")
+```
+
+Clean the population datasets.
+
+```{r population_cleaning}
+colnames(population_pre) <- c("Parish", "Population_1509", "Population_1551", 
+                              "Population_1581", "Population_1586")
+
+# Remove artifacts
+population_pre$Parish <- gsub("[[:space:]]", ".", population_pre$Parish)
+population_pre$Parish <- sub("S.", "S", population_pre$Parish)
+
+population_post$Parish <- gsub("[[:space:]]", ".", population_post$Parish)
+population_post$Parish <- sub("S.", "S", population_post$Parish)
+
+# Identify and remove the parishes that are not contained in both the 
+# 1586 census and the 1696 census
+remove_vec <- c()
+for(i in 1:length(population_pre$Parish)){
+  if(!(population_pre$Parish[i] %in% population_post$Parish)){
+    remove_vec <- c(remove_vec,i)
+  }
+}
+
+if(length(remove_vec) > 0){
+  population_pre <- population_pre[-remove_vec,]
+}
+
+remove_vec <- c()
+for(i in 1:length(population_post$Parish)){
+  if(!(population_post$Parish[i] %in% population_pre$Parish)){
+    remove_vec <- c(remove_vec, i)
+  }
+}
+
+if(length(remove_vec) > 0){
+  population_post <- population_post[-remove_vec,]
+}
+
+# Establish a consistent ordering of the parishes (alphabetical)
+population_post <- population_post %>% arrange(Parish)
+population_pre <- population_pre %>% arrange(Parish)
+
+# Remove the 1509 census data because the vast majority of values are NAs
+population_pre <- population_pre[,-2]
+
+# population_pre dataset is in thousands of people, so multiply by a thousand
+# to get the population
+
+for(j in 1:ncol(population_pre)){
+  if(j == 1){
+    next
+  }
+  for(i in 1:nrow(population_pre)){
+    population_pre[i,j] <- format(as.numeric(population_pre[i,j]), nsmall = 3)
+    
+    # Some parishes already have their population multiplied by a thousand, and
+    # those parishes will have population numbers with 7 or more characters
+    # because we include 3 decimal places in our call of the format function.
+    # Thus, we only scale the numbers that have less than 7 characters.
+    
+    if(nchar(population_pre[i,j]) < 7){ 
+      population_pre[i,j] <- as.numeric(population_pre[i,j]) * 1000
+    } else {
+      population_pre[i,j] <- as.numeric(population_pre[i,j])
+    }
+  }
+  population_pre[,j] <- as.numeric(population_pre[,j])
+}
+population_post$Population <- as.numeric(population_post$Population) * 1000
+
+# Merge population_pre and population_post into one dataframe, population_df
+population_df <- as.data.frame(cbind(population_pre, population_post[,-1]))
+colnames(population_df) <- c("Parish", "Population_1551", "Population_1581", 
+                             "Population_1586", "Population_1696")
+
+# Plot the population data over time
+year_vec <- c(c(1551, 1581, 1586, 1696))
+
+t_pop_df <- transpose(population_df)
+rownames(t_pop_df) <- colnames(population_df)
+t_pop_df <- t_pop_df[-1,]
+colnames(t_pop_df) <- population_df$Parish
+t_pop_df <- cbind(year_vec, t_pop_df)
+t_pop_df_plot <- t_pop_df %>% 
+  gather(key="Parish_var", value = "value", -year_vec)
+t_pop_df_plot$value <- as.numeric(t_pop_df_plot$value)
+
+t_pop_df_plot %>%
+  ggplot(aes(x = year_vec, y = value))+
+  geom_line(aes(color = Parish_var), show.legend = FALSE, linewidth = 0.5)+
+  labs(x = "Year", y = "Population", 
+       title = "Population over Time for each Parish")+
+  scale_y_log10()+
+  theme_minimal()
+
+# ggsave("PopulationsOverTimeNoLegendYLog10.png", width = 1920, height = 1080, units = "px")
+```
+
+Plot the 1696 population data vs. the 1586 population data.
+
+```{r population_plot}
+population_df %>%
+  ggplot(aes(x = Population_1586, y = Population_1696))+
+  geom_point(size = 0.5)+
+  geom_smooth(method = lm, se = FALSE, linewidth = 0.5)+
+  theme_bw()+
+  theme(text = element_text(family = ""), panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+  labs(x = "Population in 1586", y = "Population in 1696", title = "Population in 1696 vs. Population in 1586")
+
+# Save as Supplementary Figure 1 (now 6)
+# ggsave("SuppFig1.jpg", width = 1920, height = 1080, units = "px")
+```
+
+Run a linear regression on the Venetian census data from 1696 vs. 1586 to determine the validity of using linear interpolation to estimate 1629 parish populations.
+
+```{r linear_regression}
+cor(population_df$Population_1586, population_df$Population_1696) #0.95
+
+plot(x = population_df$Population_1586, y = population_df$Population_1696)
+
+abline(mod <- lm(population_df$Population_1696 ~ population_df$Population_1586)) 
+# y = 1696, x = 1586 (closest census date) so slope < 1 means that 
+# population decreased over time
+
+intercept <- as.numeric(coef(mod)[1])
+slope <- as.numeric(coef(mod)[2]) #slope, close to 1 so we feel comfortable interpolating
+```
+
+Due to the high $r$ value (0.95) and the slope being close to 1, we feel comfortable linearly interpolating between the 1696 and 1586 population data to estimate each parish's population on January 1, 1629.
+
+```{r interpolation}
+# 1629 - 1586 = 43, 1696 - 1586 = 110, so to interpolate we multiply by 43/110
+interpolated_1629 <- (intercept - (1-slope) * population_pre$Population_1586) * 
+  43/110 + population_pre$Population_1586
+```
+
+Create population_specified, a dataframe containing only the populations of the parishes of interest.
+
+```{r define_population_specified}
+population <- data.frame(population_post$Parish,interpolated_1629 / 1000)
+colnames(population) <- c("Parish","Population")
+population_specified <- population[population$Parish %in% colnames(filled[,-1]),]
+population_specified <- population_specified[match(colnames(filled[,-1]), population_specified$Parish),]
+```
+
+Now, we combine sestiere_pre and sestiere_post, the two dataframes that list the parishes within each sestiere (a sestiere is a larger geographical area that contains multiple parishes).
+
+```{r combine_sestiere_dfs}
+# Fix the parish names on both sestiere dataframes
+sestiere_pre$Parish <- gsub("[[:space:]]", ".", sestiere_pre$Parish)
+sestiere_pre$Parish <- sub("S.", "S", sestiere_pre$Parish)
+sestiere_post$Parish <- gsub("[[:space:]]", ".", sestiere_post$Parish)
+sestiere_post$Parish <- sub("S.", "S", sestiere_post$Parish)
+
+# Arrange both sestiere dataframes by sestiere
+sestiere_pre <- sestiere_pre %>% arrange(Sestiere, Parish)
+sestiere_post <- sestiere_post %>% arrange(Sestiere, Parish)
+
+# Since we chose to interpolate using population_1586, we use sestiere_pre,
+# which is taken from the same 1586 census, to ensure that the parish names match
+sestiere_df <- sestiere_pre
+
+# Match parishes in sestiere_df with those in filled
+remove_vec <- c()
+for(i in 1:length(sestiere_df$Parish)){
+  if(!(sestiere_df$Parish[i] %in% colnames(filled[,-1]))){
+    remove_vec <- c(remove_vec,i)
+  }
+}
+
+if(length(remove_vec) > 0){
+  sestiere_df <- sestiere_df[-remove_vec,]
+}
+
+# Define dataframes for each individual year
+filled_1629 <- filled[year(filled$Date) == 1629,]
+filled_1630 <- filled[year(filled$Date) == 1630,]
+filled_1631 <- filled[year(filled$Date) == 1631,]
+```
+
+Finally, we figure out which parishes we will keep. The following lines exclude the parishes which had no data whatsoever in the entire primary outbreak window (9/1/30-12/31/30).
+
+```{r outlier_handling}
+outliers <- c("S.Polo", "S.Stae", "S.Marco") #No cases between 9/1/30 and 12/31/30, outbreak time
+filled_modified <- filled[, !(colnames(filled) %in% outliers)]
+sestiere_df_modified <- sestiere_df[!(sestiere_df$Parish %in% outliers),]
+population_specified_modified <- population_specified[!(population_specified$Parish %in% outliers),]
+```
+
+## Bootstrapping
+
+In this section of code, we run bootstrapping (*n* = 999) to identify 95% confidence intervals for all of the statistics we calculate.
+
+### Define Statistic-Calculating Functions
+
+First, we define the functions we will bootstrap with.
+
+For our histogram approximation of the PDF, we use Sturges's Rule to choose $K$, the number of bins, for $N$ observations ($K = \log_2(N)+1$).
+
+```{r define_PDF_approx}
+#Define a function that provides a histogram approximation of a PDF with K bins. Here, we use Sturges's Rule for K.
+PDF_approx <- function(x, K = ceiling(log2(length(x))) + 1) {
+  p <- table(cut(x, breaks = K)) / length(x)
+  sigma2 <- sum((1:K) ^ 2 * p) - sum((1:K) * p) ^ 2
+  p <- p[(p > 0)]
+  return(p)
+}
+```
+
+To calculate Kullback-Leibler divergence between two discrete probability distributions P(x) and Q(x), we use the definition $\sum_{x \in \mathcal{X}} P(x) \log \frac{P(x)}{Q(x)}$. While this formulation implies that KL divergence is undefined when $P(x) = Q(x) = 0$, we [consider the contribution of the KL divergence at that point to be zero](https://en.wikipedia.org/wiki/Kullback%E2%80%93Leibler_divergence#Definition).
+
+```{r define_KL}
+#Next, we define Kullback-Leibler divergence between two discrete probability distributions (x and y), formatted as vectors. We add a small value epsilon to avoid dividing by zero.
+KL_new <- function(x, y, epsilon = 1e-05){
+  distance = 0
+  pq_ratio = 0
+  if(length(x) != length(y)){
+    print("not same length")
+    return(NA)
+  }
+  for(i in 1:length(x)){
+    if(is.nan(x[i]) | is.nan(y[i]) | x[i] == 0){
+      next
+    }
+    if(y[i] == 0){
+      pq_ratio = x[i] / epsilon
+    } else {
+      pq_ratio = x[i] / y[i]
+    }
+    distance = distance + x[i] * log(pq_ratio)
+  }
+  return(distance)
+}
+  
+```
+
+For a discrete probability distribution $P(x)$ taking values in the set $\mathcal{X}$, we define the Shannon entropy $H$ to be $H = -\sum_{x \in \mathcal{X}} P(x) \ln P(x)$.
+
+Now, we define our master analysis function which returns the total number of deaths, Shannon entropy of the PDF, Shannon Entropy of the quantile function, negentropy of the PDF (KL divergence with a Gaussian), KL divergence of the PDF from a uniform, and KL divergence of the quantile from a discrete uniform at a given timestep. Later, we will run this function on the 999 resampled datasets generated during the bootstrapping process.
+
+```{r define_entropy_procedure}
+#---- 
+# Documentation: entropy_procedure
+# Usage: entropy_procedure(original_data, subset, indices, timestep, cumulative)
+# @description: Return a list containing the sum of all cases (sum), 
+# Shannon entropy of the PDF (shannonPDF), 
+# Shannon entropy of the quantile function (shannonQuantile), 
+# KL divergence of the PDF from a Gaussian distribution (negentPDF), 
+# KL divergence of the PDF from a uniform distribution (uniformKL_PDF),
+# and KL divergence of the quantile function from a uniform distribution (uniformKL_Quantile)
+# calculated on mortality data in a specified subset of parishes on or up to a particular day
+
+# Arguments/Options:
+# @param original_data: a dataframe containing one variable for every parish of interest. Note that original_data does NOT get modified by subset, so original_data must already be subsetted if one only wishes to include a smaller selection of parishes.
+# @param subset: a vector containing the indices of the parishes of interest in colnames(filled_modified).
+# @param indices: a vector containing the indices generated by sampling with replacement. To analyze the original data, set indices = 1:ncol(original_data).
+# @param timestep: an integer between 1 and 1095 corresponding to the day for which the aforementioned statistics should be calculated.
+# @param cumulative: a boolean specifying whether deaths occurring on days prior to timestep should be included. If cumulative is set to FALSE, only deaths on day "timestep" will be considered. If cumulative is set to TRUE, deaths up to and including day "timestep" will be added up (DEFAULT: TRUE)
+
+# @return: the list as described above
+#----
+
+entropy_procedure <- function(original_data,
+           subset,
+           indices,
+           timestep,
+           cumulative = TRUE) {
+    boot_data <- original_data[, indices]
+    # The proper index for pop_spec is subset - 1 because filled has a "Date"
+    # column while population_specified_modified does not
+    pop_spec <- population_specified_modified[subset - 1, ][indices, ]
+    if (cumulative) {
+      non_pop_corrected <- as.numeric(colSums(boot_data[1:timestep, ]))
+    } else {
+      non_pop_corrected <- as.numeric(boot_data[timestep, ])
+    }
+    
+    # Case vector (cv): cases in each parish divided by parish population
+    cv <- non_pop_corrected / (pop_spec$Population * 1000)
+    cv <- sort(cv)
+    
+    # Normalized case vector (cv_norm): quantile function
+    cv_norm <- cv / sum(cv)
+    
+    # Kernel (kern): histogram of mortality with # bins specified by Sturges's Rule
+    kern <- as.numeric(PDF_approx(cv))
+    
+    # Normalized kernel (kern_norm): PMF
+    kern_norm <- kern / sum(kern)
+    
+    shannon_PDF <- -1 * sum(kern[kern != 0] * log(kern[kern != 0]))
+    shannon_quantile <-
+      -1 * sum(cv_norm[cv_norm != 0] * log(cv_norm[cv_norm != 0]))
+    
+    # Use the msos negent function to calculate the negentropy of the PDF
+    negent_PDF <- negent(cv) 
+
+    uniform_KL_PDF <-
+      as.numeric(KL_new(kern, rep(1 / length(kern), length(kern))))
+    uniform_KL_quantile <-
+      KL_new(cv_norm, rep(1 / length(cv_norm), length(cv_norm)))
+    return(
+      list(
+        sum = sum(non_pop_corrected) / (sum(pop_spec$Population) * 1000),
+        shannonPDF = shannon_PDF,
+        shannonQuantile = shannon_quantile,
+        negentPDF = negent_PDF,
+        uniformKL_PDF = uniform_KL_PDF,
+        uniformKL_Quantile = uniform_KL_quantile
+      )
+    )
+  }
+```
+
+### Define Bootstrapping Functions
+
+Now, we implement a generalized function to bootstrap over our entropy_procedure function. We will utilize this function in the subsequent functions bootstrapping over a particular dataset.
+
+```{r define manual_boot_modified}
+#----
+# Documentation: manual_boot_modified
+# Usage: manual_boot_modified(data, subset, N, max_ts, cumulative)
+# @description: Returns a list containing six matrices formatted with dates as columns and resamples as rows. In order, the matrices contain: 
+# the sum of all cases (sum_mat), 
+# Shannon entropy of the PDF (shannonPDF_mat), 
+# Shannon entropy of the quantile function (shannonQuantile_mat), 
+# KL divergence of the PDF from a Gaussian distribution (negentPDF_mat), 
+# KL divergence of the PDF from a uniform distribution (uniformKL_PDF_mat),
+# and KL divergence of the quantile function from a uniform distribution (uniformKL_Quantile_mat)
+# calculated on mortality data in a specified subset of parishes on or up to a particular day.
+
+# Arguments/Options:
+# @param original_data: a dataframe containing one variable for every parish of interest. Note that original_data does NOT get modified by the parameter "subset", so original_data must already be subsetted if one only wishes to include a smaller selection of parishes.
+# @param subset: a vector containing the indices of the parishes of interest in colnames(filled_modified).
+# @param N: an integer denoting the number of resamples to perform.
+# @param max_ts: an integer corresponding to the final day for which the aforementioned statistics should be calculated.
+# @param cumulative: a boolean specifying whether deaths occurring on days prior to timestep should be included. If cumulative is set to FALSE, the aforementioned calculations for a given day will only consider the deaths on that given day. If cumulative is set to TRUE, deaths up to and including that day will be summed.
+
+# @return: the list as described above
+#----
+
+manual_boot_modified <-
+  function(original_data, subset, N, max_ts, cumulative) {
+    sum_mat <- matrix(NA, nrow = N, ncol = max_ts)
+    shannonPDF_mat <- matrix(NA, nrow = N, ncol = max_ts)
+    shannonQuantile_mat <- matrix(NA, nrow = N, ncol = max_ts)
+    negentPDF_mat <- matrix(NA, nrow = N, ncol = max_ts)
+    uniformKL_PDF_mat <- matrix(NA, nrow = N, ncol = max_ts)
+    uniformKL_Quantile_mat <- matrix(NA, nrow = N, ncol = max_ts)
+    # Iterate across N resamplings
+    for (i in 1:N) {
+      # Obtain a random sample of the data with replacement with length equal to the original data 
+      sample_index <- sample(ncol(data), replace = TRUE)
+      # Iterate across every day in the 3 year period
+      for (t in 1:max_ts) {
+        current_list <-
+          entropy_procedure(original_data, subset, sample_index,
+                                      t, cumulative)
+        sum_mat[i, t] <- current_list$sum
+        shannonPDF_mat[i, t] <- current_list$shannonPDF
+        shannonQuantile_mat[i, t] <- current_list$shannonQuantile
+        negentPDF_mat[i, t] <- current_list$negentPDF
+        uniformKL_PDF_mat[i, t] <- current_list$uniformKL_PDF
+        uniformKL_Quantile_mat[i, t] <-
+          current_list$uniformKL_Quantile
+      }
+    }
+    return(
+      list(
+        sum = sum_mat,
+        shannonPDF = shannonPDF_mat,
+        shannonQuantile = shannonQuantile_mat,
+        negentPDF = negentPDF_mat,
+        uniformKL_PDF = uniformKL_PDF_mat,
+        uniformKL_Quantile = uniformKL_Quantile_mat
+      )
+    )
+  }
+```
+
+### Identify 95% CI
+
+Instead of finding the 97.5th and 2.5th percentile full runs, we find the 97.5th and 2.5th percentile values at each time point.
+
+```{r define find_closest_run}
+#----
+# Documentation: find_closest_run
+# Usage: find_closest_run(all_runs, target_percentile)
+# @description: Returns in vector form the row of a specified dataframe with the nth lowest sum (n = target_percentile)
+
+# Arguments/Options: 
+# @param all_runs: a dataframe containing numeric values with one column for every time point and one row for every resampling
+# @param target_percentile: an integer describing the index of the desired sorted vector all_runs. For example, if all_runs contains 1000 rows, the 95th percentile row selected by setting target_percentile = 950)
+
+# @return: the numeric vector as described above
+#----
+
+find_closest_run <- function(all_runs, target_percentile) {
+  all_runs_sum <- rowSums(all_runs)
+  sorted_all_runs_sum <- sort(all_runs_sum)
+  index <- match(sorted_all_runs_sum[target_percentile], all_runs_sum)
+  return(as.numeric(all_runs[index,]))
+}
+```
+
+### Per-sestiere analysis
+
+Now, we define the analysis and bootstrapping functions for the per-sestiere analysis.
+
+```{r define_sestiere_bootstrapping}
+#----
+# Documentation: shannonBySestiere
+# Usage: shannonBySestiere(cumulative)
+# @description: Returns a list of 6 lists (one for each sestiere). Each list contains six numerical vectors (one for each statistic) with entries for every day in the epidemic. 
+
+# Arguments/Options:
+# @param cumulative: a boolean specifying whether deaths occurring on days prior to timestep should be included. If cumulative is set to FALSE, the aforementioned calculations for a given day will only consider the deaths on that given day. If cumulative is set to TRUE, deaths up to and including that day will be summed (DEFAULT: TRUE)
+
+# @return: the list as described above
+#----
+shannonBySestiere <- function(cumulative = TRUE) {
+  # Initialize vectors
+  sum_vec <- rep(0, length(filled_modified$Date))
+  shannonPDF_vec <- rep(0, length(filled_modified$Date))
+  shannonQuantile_vec <- rep(0, length(filled_modified$Date))
+  negentPDF_vec <- rep(0, length(filled_modified$Date))
+  uniformKL_PDF_vec <- rep(0, length(filled_modified$Date))
+  uniformKL_Quantile_vec <- rep(0, length(filled_modified$Date))
+  
+  # Initialize the output list
+  all_runs_list <-
+    vector(mode = "list", length = length(unique(sestiere_df_modified$Sestiere)))
+  
+  for (s in unique(sestiere_df_modified$Sestiere)) {
+    # Generate a vector containing the indices of the current sestiere's parishes
+    sestiere_parishes <-
+      match(sestiere_df_modified$Parish[sestiere_df_modified$Sestiere == s], colnames(filled_modified))
+    for (i in 1:length(filled_modified$Date)) {
+      current_list <-
+        entropy_procedure(
+          filled_modified[, sestiere_parishes], # Subset the data using sestiere_parishes
+          subset = sestiere_parishes,
+          seq(
+            1,
+            length(sestiere_parishes),
+            length.out = length(sestiere_parishes)
+          ),
+          timestep = i,
+          cumulative = cumulative
+        )
+      sum_vec[i] <- current_list$sum
+      shannonPDF_vec[i] <- current_list$shannonPDF
+      shannonQuantile_vec[i] <- current_list$shannonQuantile
+      negentPDF_vec[i] <- current_list$negentPDF
+      uniformKL_PDF_vec[i] <- current_list$uniformKL_PDF
+      uniformKL_Quantile_vec[i] <- current_list$uniformKL_Quantile
+    }
+    # For each sestiere, store a list of the six statistic vectors in all_runs_list
+    all_runs_list[[match(s, unique(sestiere_df_modified$Sestiere))]] <-
+      list(
+        sum = sum_vec,
+        shannonPDF = shannonPDF_vec,
+        shannonQuantile = shannonQuantile_vec,
+        negentPDF = negentPDF_vec,
+        uniformKL_PDF = uniformKL_PDF_vec,
+        uniformKL_Quantile = uniformKL_Quantile_vec
+      )
+  }
+  return(all_runs_list)
+}
+
+#----
+# Documentation: shannonBySestiere_Bootstrapped
+# Usage: shannonBySestiere_Bootstrapped(cumulative)
+# @description: Returns a list containing 6 lists (one for each sestiere), each containing 5 matrices formatted with each statistic as a column and each day as a row. In order, the matrices contain: 
+# the 5th percentile value of each statistic calculated separately on each day (b1), 
+# the 95th percentile value of each statistic calculated separately on each day (b2), 
+# the value of the 5th percentile resample for each statistic (closest_runs_025), 
+# the value of the 5th percentile resample for each statistic (closest_runs_975), 
+# calculated on mortality data in each sestiere on or up to a particular day.
+
+# Arguments/Options:
+# @param cumulative: a boolean specifying whether deaths occurring on days prior to timestep should be included. If cumulative is set to FALSE, the aforementioned calculations for a given day will only consider the deaths on that given day. If cumulative is set to TRUE, deaths up to and including that day will be summed (DEFAULT: TRUE)
+
+# @return: the list as described above
+#----
+
+shannonBySestiere_Bootstrapped <- function(cumulative = TRUE) {
+  num_dates <- length(filled_modified$Date)
+  sestiere_list <- unique(sestiere_df_modified$Sestiere)
+  num_sestieri <- length(sestiere_list)
+  
+  # Keep track of run time
+  st <- Sys.time()
+  
+  # Initialize all_runs_list, which we will eventually return
+  all_runs_list <- vector(mode = "list", length = length(sestiere_list))
+  
+  for (s in sestiere_list) {
+    cat("Processing:", s, "\n")
+    s_index <- match(s, sestiere_list)
+    
+    # Find the indices of the parishes in sestiere "s" in filled_modified
+    sestiere_parishes <- match(sestiere_df_modified$Parish[sestiere_df_modified$Sestiere == s], colnames(filled_modified))
+    
+    # Subset the mortality data to only consider the parishes in sestiere "s"
+    data_subset <- filled_modified[, sestiere_parishes]
+    
+    boot_mat <- manual_boot_modified(data = data_subset, 
+                                       subset = sestiere_parishes, N = 999, 
+                                       max_ts = num_dates, 
+                                       cumulative = cumulative)
+    
+    #Initialize the upper and lower bound matrices
+    b1_mat <- matrix(NA, ncol = length(boot_mat), nrow = num_dates)
+    b2_mat <- matrix(NA, ncol = length(boot_mat), nrow = num_dates)
+    
+    closest_runs_025_mat <- matrix(NA, ncol = length(boot_mat), nrow = num_dates)
+    closest_runs_975_mat <- matrix(NA,ncol = length(boot_mat), nrow = num_dates)
+    #b1[, s_index] <- apply(boot_mat, 2, quantile, probs = 0.025, na.rm = TRUE)
+    #b2[, s_index] <- apply(boot_mat, 2, quantile, probs = 0.975, na.rm = TRUE)
+    for(j in 1:length(boot_mat)){
+      closest_runs_025_mat[,j] <- find_closest_run(boot_mat[[j]], 25)
+      closest_runs_975_mat[,j] <- find_closest_run(boot_mat[[j]], 975)
+      for(i in 1:ncol(boot_mat[[j]])){
+        sorted <- sort(as.numeric(boot_mat[[j]][,i]))
+        b1_mat[i, j] <- sorted[25]
+        b2_mat[i, j] <- sorted[975]
+      }
+    }
+    all_runs_list[[match(s,sestiere_list)]] <- list(b1 = b1_mat, b2 = b2_mat, closest_runs_025 = closest_runs_025_mat, closest_runs_975 = closest_runs_975_mat)
+  }
+  ed <- Sys.time()
+  print(ed - st)
+  return(all_runs_list)
+}
+```
+
+### Whole Dataset Analysis
+
+Finally, we define the functions for the bootstrapping of the whole dataset.
+
+```{r define_whole_dataset_analysis}
+#----
+# Documentation: whole_dataset_analysis
+# Usage: whole_dataset_analysis(cumulative)
+# @description: Returns a list of 6 vectors, each containing the value of a particular statistic for every day in the epidemic.
+
+# Arguments/Options:
+# @param cumulative: a boolean specifying whether deaths occurring on days prior to timestep should be included. If cumulative is set to FALSE, the aforementioned calculations for a given day will only consider the deaths on that given day. If cumulative is set to TRUE, deaths up to and including that day will be summed (DEFAULT: TRUE)
+
+# @return: the list as described above
+#----
+whole_dataset_analysis <- function(cumulative = TRUE){
+  # Initialize the vectors for each statistic
+  sum_vec <- rep(0, length(filled_modified$Date)) # cumulative deaths
+  shannonPDF_vec <- rep(0, length(filled_modified$Date)) # Shannon entropy of the PDF
+  shannonQuantile_vec <- rep(0, length(filled_modified$Date)) # Shannon entropy of the quantile function
+  negentPDF_vec <- rep(0, length(filled_modified$Date)) # KL divergence of the PDF from a Gaussian
+  uniformKL_PDF_vec <- rep(0, length(filled_modified$Date)) # KL divergence of the PDF from a uniform
+  uniformKL_Quantile_vec <- rep(0, length(filled_modified$Date)) # KL divergence of the quantile function from a uniform
+  
+  st <- Sys.time() # Record the starting time
+  pb <- progress_bar$new(total = length(filled_modified$Date)) # Create a progress bar
+  
+  for(i in 1:length(filled_modified$Date)){
+    current_list <- entropy_procedure(filled_modified[,-1], subset = 2:ncol(filled_modified), indices = 1:ncol(filled_modified[,-1]), timestep = i, cumulative)
+    sum_vec[i] <- current_list$sum
+    shannonPDF_vec[i] <- current_list$shannonPDF
+    shannonQuantile_vec[i] <- current_list$shannonQuantile
+    negentPDF_vec[i] <- current_list$negentPDF
+    uniformKL_PDF_vec[i] <- current_list$uniformKL_PDF
+    uniformKL_Quantile_vec[i] <- current_list$uniformKL_Quantile
+    pb$tick()
+  }
+  ed <- Sys.time() # Record the final time
+  print(ed - st) # Print the runtime
+  return(list(sum = sum_vec, shannonPDF = shannonPDF_vec, shannonQuantile = shannonQuantile_vec, negentPDF = negentPDF_vec, uniformKL_PDF = uniformKL_PDF_vec, uniformKL_Quantile = uniformKL_Quantile_vec))
+}
+
+#----
+# Documentation: whole_dataset_bootstrap
+# Usage: whole_dataset_bootstrap(cumulative)
+# @description: Returns a list of 4 lists. Lists b1 and b2 correspond to the 2.5th and 97.5th percentile values at every time step, respectively, while lists closest_run_025 and closest_runs_975 correspond to the values of the 2.5th and 97.5th percentile trials, respectively. 
+
+# Arguments/Options:
+# @param cumulative: a boolean specifying whether deaths occurring on days prior to timestep should be included. If cumulative is set to FALSE, the aforementioned calculations for a given day will only consider the deaths on that given day. If cumulative is set to TRUE, deaths up to and including that day will be summed (DEFAULT: TRUE)
+
+# @return: the list as described above
+#----
+whole_dataset_bootstrap <- function(cumulative = TRUE){
+  num_dates <- length(filled_modified$Date)
+  b1 <- rep(0, num_dates) # 2.5%
+  b2 <- rep(0, num_dates) # 97.5%
+  boot_mat <- manual_boot_modified(data = filled_modified[,-1], subset = 2:ncol(filled_modified), N = 999, max_ts = num_dates, cumulative = cumulative)
+  b1_list <- vector(mode = "list",length = length(boot_mat))
+  b2_list <- vector(mode = "list",length = length(boot_mat))
+  closest_runs_025_list <- vector(mode = "list", length(boot_mat))
+  closest_runs_975_list <- vector(mode = "list", length(boot_mat))
+    #b1[, s_index] <- apply(boot_mat, 2, quantile, probs = 0.025, na.rm = TRUE)
+    #b2[, s_index] <- apply(boot_mat, 2, quantile, probs = 0.975, na.rm = TRUE)
+  for(j in 1:length(boot_mat)){
+    closest_025 <- find_closest_run(boot_mat[[j]], 25)
+    closest_975 <- find_closest_run(boot_mat[[j]], 975)
+    for(i in 1:ncol(boot_mat[[j]])){
+      sorted <- sort(as.numeric(boot_mat[[j]][,i]))
+      b1[i] <- sorted[25]
+      b2[i] <- sorted[975]
+    }
+    b1_list[[j]] <- b1
+    b2_list[[j]] <- b2
+    closest_runs_025_list[[j]] <- closest_025
+    closest_runs_975_list[[j]] <- closest_975
+  }
+  return(list(b1 = b1_list, b2 = b2_list, closest_runs_025 = closest_runs_025_list, closest_runs_975 = closest_runs_975_list))
+}
+```
+
+### Run Bootstrap
+
+Finally, we run our bootstrap!
+
+```{r run_bootstrap, eval = FALSE}
+
+set.seed(123) #unfortunately, we didn't set the seed ahead of time
+
+stats_by_sestiere_boot_cumulative_50_2 <- shannonBySestiere_Bootstrapped(cumulative = TRUE) #w/ fixed negent
+stats_by_sestiere_boot_instantaneous_50_2 <- shannonBySestiere_Bootstrapped(cumulative = FALSE)
+stats_by_sestiere_cumulative_50_2 <- shannonBySestiere(cumulative = TRUE)
+stats_by_sestiere_instantaneous_50_2 <- shannonBySestiere(cumulative = FALSE)
+stats_of_whole_cumulative_50_2 <- whole_dataset_analysis(cumulative = TRUE) #default
+stats_of_whole_instantaneous_50_2 <- whole_dataset_analysis(cumulative = FALSE)
+stats_of_whole_boot_cumulative_50_2 <- whole_dataset_bootstrap(cumulative = TRUE)
+stats_of_whole_boot_instantaneous_50_2 <- whole_dataset_bootstrap(cumulative = FALSE)
+
+# Save our bootstrap values to a separate document
+# saveRDS(stats_by_sestiere_boot_cumulative_50_2,"stats_by_sestiere_boot_cumulative_50_2.rds")
+# saveRDS(stats_by_sestiere_boot_instantaneous_50_2,"stats_by_sestiere_boot_instantaneous_50_2.rds")
+# saveRDS(stats_of_whole_boot_cumulative_50_2,"stats_of_whole_boot_cumulative_50_2.rds")
+# saveRDS(stats_of_whole_boot_instantaneous_50_2,"stats_of_whole_boot_instantaneous_50_2.rds")
+```
+
+# Results
+
+Now, we record our results.
+
+## Printed Results
+
+In this section, we focus on printing specific values of interest.
+
+### Print Values on First and Last Day with 95% CIs
+
+First, we print the true value, 2.5th percentile value, and 97.5th percentile value on the first and last days of the epidemic for each of our statistics calculated on the cumulative mortality data.
+
+```{r print cumulative bootstrap results - first and last day values, eval = FALSE}
+# Entropy of the quantile function on the first day
+stats_of_whole_cumulative_50_2$shannonQuantile[1]
+stats_of_whole_boot_cumulative_50_2$b1[[3]][1]
+stats_of_whole_boot_cumulative_50_2$b2[[3]][1]
+
+# Entropy of the quantile function on the final day
+stats_of_whole_cumulative_50_2$shannonQuantile[1095]
+stats_of_whole_boot_cumulative_50_2$b1[[3]][1095]
+stats_of_whole_boot_cumulative_50_2$b2[[3]][1095]
+
+
+# KL divergence of the quantile function on the first day from a uniform distribution
+stats_of_whole_cumulative_50_2$uniformKL_Quantile[1]
+stats_of_whole_boot_cumulative_50_2$b1[[6]][1]
+stats_of_whole_boot_cumulative_50_2$b2[[6]][1]
+
+# KL divergence of the quantile function on the final day from a uniform distribution
+stats_of_whole_cumulative_50_2$uniformKL_Quantile[1095]
+stats_of_whole_boot_cumulative_50_2$b1[[6]][1095]
+stats_of_whole_boot_cumulative_50_2$b2[[6]][1095]
+
+
+# Entropy of the PDF on the first day
+stats_of_whole_cumulative_50_2$shannonPDF[1]
+stats_of_whole_boot_cumulative_50_2$b1[[2]][1]
+stats_of_whole_boot_cumulative_50_2$b2[[2]][1]
+
+# Entropy of the PDF on the final day
+stats_of_whole_cumulative_50_2$shannonPDF[1095]
+stats_of_whole_boot_cumulative_50_2$b1[[2]][1095]
+stats_of_whole_boot_cumulative_50_2$b2[[2]][1095]
+
+
+# KL divergence of the PDF on the first day from a Gaussian distribution
+stats_of_whole_cumulative_50_2$negentPDF[1]
+stats_of_whole_boot_cumulative_50_2$b1[[4]][1]
+stats_of_whole_boot_cumulative_50_2$b2[[4]][1]
+
+# KL divergence of the PDF on the final day from a Gaussian distribution
+stats_of_whole_cumulative_50_2$negentPDF[1095]
+stats_of_whole_boot_cumulative_50_2$b1[[4]][1095]
+stats_of_whole_boot_cumulative_50_2$b2[[4]][1095]
+
+
+# KL divergence of the PDF on the first day from a uniform distribution 
+stats_of_whole_cumulative_50_2$uniformKL_PDF[1]
+stats_of_whole_boot_cumulative_50_2$b1[[5]][1]
+stats_of_whole_boot_cumulative_50_2$b2[[5]][1]
+
+# KL divergence of the PDF on the final day from a uniform distribution
+stats_of_whole_cumulative_50_2$uniformKL_PDF[1095]
+stats_of_whole_boot_cumulative_50_2$b1[[5]][1095]
+stats_of_whole_boot_cumulative_50_2$b2[[5]][1095]
+
+# Same as previous, but using the "closest runs" methodology to find the 2.5th and 97.5th percentile values
+stats_of_whole_boot_cumulative_50_2$closest_runs_025[[5]][1095]
+stats_of_whole_boot_cumulative_50_2$closest_runs_975[[5]][1095]
+```
+
+Second, we print the extrema of each statistic (minima for KL divergence, maxima for entropy) calculated on the cumulative mortality data, the day on which they occurred, and the 2.5th and 97.5th percentile values on that day.
+
+```{r print cumulative bootstrap results - extrema, eval = FALSE}
+# Minimum KL divergence of the PDF from a uniform distribution
+min(stats_of_whole_cumulative_50_2$uniformKL_PDF)
+min_index <- match(min(stats_of_whole_cumulative_50_2$uniformKL_PDF),stats_of_whole_cumulative_50_2$uniformKL_PDF)
+filled$Date[min_index]
+stats_of_whole_cumulative_50_2$uniformKL_PDF[min_index]
+stats_of_whole_boot_cumulative_50_2$b1[[5]][min_index]
+stats_of_whole_boot_cumulative_50_2$b2[[5]][min_index]
+
+# Minimum KL divergence of the PDF from a Gaussian distribution
+min(stats_of_whole_cumulative_50_2$negentPDF)
+min_index <- match(min(stats_of_whole_cumulative_50_2$negentPDF),stats_of_whole_cumulative_50_2$negentPDF)
+filled$Date[min_index]
+stats_of_whole_cumulative_50_2$negentPDF[min_index]
+stats_of_whole_boot_cumulative_50_2$b1[[4]][min_index]
+stats_of_whole_boot_cumulative_50_2$b2[[4]][min_index]
+
+# Minimum KL divergence of the quantile function from a uniform distribution
+min(stats_of_whole_cumulative_50_2$uniformKL_Quantile)
+min_index <- match(min(stats_of_whole_cumulative_50_2$uniformKL_Quantile),stats_of_whole_cumulative_50_2$uniformKL_Quantile)
+filled$Date[min_index]
+stats_of_whole_cumulative_50_2$uniformKL_Quantile[min_index]
+stats_of_whole_boot_cumulative_50_2$b1[[6]][min_index]
+stats_of_whole_boot_cumulative_50_2$b2[[6]][min_index]
+
+# Maximum entropy of the quantile function
+max(stats_of_whole_cumulative_50_2$shannonQuantile)
+max_index <- match(max(stats_of_whole_cumulative_50_2$shannonQuantile),stats_of_whole_cumulative_50_2$shannonQuantile)
+filled$Date[max_index]
+stats_of_whole_cumulative_50_2$shannonQuantile[max_index]
+stats_of_whole_boot_cumulative_50_2$b1[[3]][max_index]
+stats_of_whole_boot_cumulative_50_2$b2[[3]][max_index]
+
+# Maximum entropy of the PDF
+max(stats_of_whole_cumulative_50_2$shannonPDF)
+max_index <- match(max(stats_of_whole_cumulative_50_2$shannonPDF),stats_of_whole_cumulative_50_2$shannonPDF)
+filled$Date[max_index]
+stats_of_whole_cumulative_50_2$shannonPDF[max_index]
+stats_of_whole_boot_cumulative_50_2$b1[[2]][max_index]
+stats_of_whole_boot_cumulative_50_2$b2[[2]][max_index]
+```
+
+Then, we do the same for our statistics calculated on the instantaneous mortality data.
+
+First and last day values:
+
+```{r print instantaneous_bootstrap results - first and last day values, eval = FALSE}
+# Entropy of the quantile function on the first day
+stats_of_whole_instantaneous_50_2$shannonQuantile[1]
+stats_of_whole_boot_instantaneous_50_2$b1[[3]][1]
+stats_of_whole_boot_instantaneous_50_2$b2[[3]][1]
+
+# Entropy of the quantile function on the final day
+stats_of_whole_instantaneous_50_2$shannonQuantile[1095]
+stats_of_whole_boot_instantaneous_50_2$b1[[3]][1095]
+stats_of_whole_boot_instantaneous_50_2$b2[[3]][1095]
+
+
+# KL divergence of the quantile function on the first day from a uniform distribution
+stats_of_whole_instantaneous_50_2$uniformKL_Quantile[1]
+stats_of_whole_boot_instantaneous_50_2$b1[[6]][1]
+stats_of_whole_boot_instantaneous_50_2$b2[[6]][1]
+
+# KL divergence of the quantile function on the final day from a uniform distribution
+stats_of_whole_instantaneous_50_2$uniformKL_Quantile[1095]
+stats_of_whole_boot_instantaneous_50_2$b1[[6]][1095]
+stats_of_whole_boot_instantaneous_50_2$b2[[6]][1095]
+
+
+# Entropy of the PDF on the first day
+stats_of_whole_instantaneous_50_2$shannonPDF[1]
+stats_of_whole_boot_instantaneous_50_2$b1[[2]][1]
+stats_of_whole_boot_instantaneous_50_2$b2[[2]][1]
+
+# Entropy of the PDF on the final day
+stats_of_whole_instantaneous_50_2$shannonPDF[1095]
+stats_of_whole_boot_instantaneous_50_2$b1[[2]][1095]
+stats_of_whole_boot_instantaneous_50_2$b2[[2]][1095]
+
+
+# KL divergence of the PDF on the first day from a Gaussian distribution
+stats_of_whole_instantaneous_50_2$negentPDF[1]
+stats_of_whole_boot_instantaneous_50_2$b1[[4]][1]
+stats_of_whole_boot_instantaneous_50_2$b2[[4]][1]
+
+# KL divergence of the PDF on the final day from a Gaussian distribution
+stats_of_whole_instantaneous_50_2$negentPDF[1095]
+stats_of_whole_boot_instantaneous_50_2$b1[[4]][1095]
+stats_of_whole_boot_instantaneous_50_2$b2[[4]][1095]
+
+
+# KL divergence of the PDF on the first day from a uniform distribution
+stats_of_whole_instantaneous_50_2$uniformKL_PDF[1]
+stats_of_whole_boot_instantaneous_50_2$b1[[5]][1]
+stats_of_whole_boot_instantaneous_50_2$b2[[5]][1]
+
+# KL divergence of the PDF on the final day from a uniform distribution
+stats_of_whole_instantaneous_50_2$uniformKL_PDF[1095]
+stats_of_whole_boot_instantaneous_50_2$b1[[5]][1095]
+stats_of_whole_boot_instantaneous_50_2$b2[[5]][1095]
+```
+
+Extrema:
+
+```{r print instantaneous bootstrap results - extrema, eval = FALSE}
+# KL divergence of the PDF from a uniform distribution
+min(stats_of_whole_instantaneous_50_2$uniformKL_PDF)
+min_index <- match(min(stats_of_whole_instantaneous_50_2$uniformKL_PDF),stats_of_whole_instantaneous_50_2$uniformKL_PDF)
+filled$Date[min_index]
+stats_of_whole_instantaneous_50_2$uniformKL_PDF[min_index]
+stats_of_whole_boot_instantaneous_50_2$b1[[5]][min_index]
+stats_of_whole_boot_instantaneous_50_2$b2[[5]][min_index]
+
+# KL divergence of the PDF from a Gaussian distribution
+min(stats_of_whole_instantaneous_50_2$negentPDF)
+min_index <- match(min(stats_of_whole_instantaneous_50_2$negentPDF),stats_of_whole_instantaneous_50_2$negentPDF)
+filled$Date[min_index]
+stats_of_whole_instantaneous_50_2$negentPDF[min_index]
+stats_of_whole_boot_instantaneous_50_2$b1[[4]][min_index]
+stats_of_whole_boot_instantaneous_50_2$b2[[4]][min_index]
+
+# KL divergence of the quantile function from a uniform distribution
+min(stats_of_whole_instantaneous_50_2$uniformKL_Quantile)
+min_index <- match(min(stats_of_whole_instantaneous_50_2$uniformKL_Quantile),stats_of_whole_instantaneous_50_2$uniformKL_Quantile)
+filled$Date[min_index]
+stats_of_whole_instantaneous_50_2$uniformKL_Quantile[min_index]
+stats_of_whole_boot_instantaneous_50_2$b1[[6]][min_index]
+stats_of_whole_boot_instantaneous_50_2$b2[[6]][min_index]
+
+# Maximum entropy of the quantile function
+max(stats_of_whole_instantaneous_50_2$shannonQuantile)
+max_index <- match(max(stats_of_whole_instantaneous_50_2$shannonQuantile),stats_of_whole_instantaneous_50_2$shannonQuantile)
+filled$Date[max_index]
+stats_of_whole_instantaneous_50_2$shannonQuantile[max_index]
+stats_of_whole_boot_instantaneous_50_2$b1[[3]][max_index]
+stats_of_whole_boot_instantaneous_50_2$b2[[3]][max_index]
+
+# Maximum entropy of the PDF
+max(stats_of_whole_instantaneous_50_2$shannonPDF)
+max_index <- match(max(stats_of_whole_instantaneous_50_2$shannonPDF),stats_of_whole_instantaneous_50_2$shannonPDF)
+filled$Date[max_index]
+stats_of_whole_instantaneous_50_2$shannonPDF[max_index]
+stats_of_whole_boot_instantaneous_50_2$b1[[2]][max_index]
+stats_of_whole_boot_instantaneous_50_2$b2[[2]][max_index]
+```
+
+### Descriptive Statistics
+
+Next, we print descriptive statistics for our dataset, such as the median and mean parish population.
+
+```{r print_descriptive_statistics}
+# Number of parishes (first column is dates)
+ncol(filled_modified[,-1])
+
+# Total population on January 1, 1629
+sum(population_specified_modified$Population*1000)
+
+# Median parish population on January 1, 1629
+median(population_specified_modified$Population*1000)
+
+# Mean parish population on January 1, 1629
+mean(population_specified_modified$Population*1000)
+
+# Standard deviation in parish population on January 1, 1629
+sd(population_specified_modified$Population*1000)
+
+# Total deaths
+sum(rowSums(filled_modified[,-1]))
+
+# Mean cumulative parish mortality rate on December 31, 1631
+mean(colSums(filled_modified[,-1])/(population_specified_modified$Population*1000))
+
+# Standard deviation in cumulative parish mortality rate on December 31, 1631
+sd(colSums(filled_modified[,-1])/(population_specified_modified$Population*1000))
+```
+
+### Effective Number of Parishes
+
+Next, we validate our results against the effective number of parties $\left(\frac{1}{\sum_{i}^{n}p_i^2}\right)$, which has a more direct interpretation.
+
+```{r effective number, eval = FALSE}
+#Effective number and log of non-zeroes
+non_zeroes_cumulative <- rep(0,length(filled$Date))
+eff_number_cumulative <- rep(0,length(filled$Date))
+non_zeroes_instantaneous <- rep(0,length(filled$Date))
+eff_number_instantaneous <- rep(0,length(filled$Date))
+
+for(i in 1:length(filled$Date)){
+  case_vec_cumulative <- as.numeric(colSums(filled_modified[1:i,-1]))/(population_specified_modified$Population*1000)
+  case_vec_cumulative_norm <- case_vec_cumulative/sum(case_vec_cumulative)
+  case_vec_instantaneous <- as.numeric(filled_modified[i,-1])/(population_specified_modified$Population*1000)
+  case_vec_instantaneous_norm <- case_vec_instantaneous/sum(case_vec_instantaneous)
+  case_vec_cumulative_norm_nonzeroes <- case_vec_cumulative_norm[case_vec_cumulative_norm != 0]
+  non_zeroes_cumulative[i] <- length(case_vec_cumulative_norm_nonzeroes)
+  eff_number_cumulative[i] <- 1/sum(case_vec_cumulative_norm_nonzeroes^2)
+  case_vec_instantaneous_norm_nonzeroes <- case_vec_instantaneous_norm[case_vec_instantaneous_norm != 0]
+  non_zeroes_instantaneous[i] <- length(case_vec_instantaneous_norm_nonzeroes)
+  eff_number_instantaneous[i] <- 1/sum(case_vec_instantaneous_norm_nonzeroes^2)
+}
+
+# Inverse Simpson's Index is Diversity with q = 2 while the Shannon Index is Diversity with q = 1
+# plot.ts(log(non_zeroes_cumulative),ylim=c(2,4),col="red")
+# lines(stats_of_whole_cumulative_50_2$shannonQuantile,col="black")
+# plot.ts(log(non_zeroes_instantaneous),ylim=c(0,4),col="red")
+# lines(stats_of_whole_instantaneous_50_2$shannonQuantile,col="black")
+# plot.ts(log(eff_number_cumulative),ylim=c(2,4),col="red")
+# lines(stats_of_whole_cumulative_50_2$shannonQuantile,col="black")
+# plot.ts(log(eff_number_instantaneous),ylim=c(0,4),col="red")
+# lines(stats_of_whole_instantaneous_50_2$shannonQuantile,col="black")
+```
+
+## Plot Results
+
+Finally, we plot our results!
+
+### Figure 2
+
+First, we create Figure 2, a grid plot consisting of:
+
+1.  Shannon entropy of the quantile function of cumulative mortality for every day in the epidemic along with corresponding 95% confidence intervals
+2.  KL divergence of the quantile function of cumulative mortality from a uniform distribution for every day in the epidemic along with corresponding 95% confidence
+
+Note that if we included the parish of S. Marco above, this will instead generate Supplementary Figure S4.
+
+```{r plot results - figure 2, eval = FALSE}
+#1: sum, 2: shannonPDF, 3: shannonQuantile, 4: negentPDF, 5: uniformKL_PDF, 6: uniformKL_Quantile
+# For x-axis, two options: time or incidence ("sum")
+
+# ----
+# Documentation: Figure 2
+# Goal: create a grid plot of shannonQuantile and uniformKL_Quantile including 95% CIs
+# ----
+
+# Initialize dataframe with 2.5th percentile value, 97.5th percentile value, and original value of uniformKL_Quantile
+plot_df <-
+  as.data.frame(
+    cbind(
+      stats_of_whole_boot_cumulative_50_2$b1[[6]],
+      stats_of_whole_boot_cumulative_50_2$b2[[6]],
+      stats_of_whole_cumulative_50_2$uniformKL_Quantile
+    )
+  )
+colnames(plot_df) <- c("b1", "b2", "observed")
+
+plot1 <- ggplot(data = plot_df, aes(x = filled$Date, y = observed)) +
+  geom_line() +
+  geom_ribbon(aes(ymin = b1, ymax = b2), alpha = 0.5) + #gray out 95% CI
+  geom_line(aes(y = rep(0, length(filled$Date))), col = "red") + #create red line indicating minimum possible KL divergence
+  coord_cartesian(ylim = c(0, 0.35)) +
+  # coord_cartesian(ylim = c(0, 0.5))+ #S. Marco
+  scale_x_date(date_breaks = "12 months", date_labels = "%m-%Y") +
+  scale_y_continuous() +
+  theme_bw() +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.background = element_blank(),
+    plot.background = element_rect(fill = "white"),
+    axis.title = element_text(size = 10),
+    plot.title = element_text(size = 12)
+  ) +
+  labs(y = "Negentropy (nats)", x = "Date", title = "Negentropy")
+
+# Initialize dataframe with 2.5th percentile value, 97.5th percentile value, and original value of shannonQuantile
+plot_df_2 <-
+  as.data.frame(
+    cbind(
+      stats_of_whole_boot_cumulative_50_2$b1[[3]],
+      stats_of_whole_boot_cumulative_50_2$b2[[3]],
+      stats_of_whole_cumulative_50_2$shannonQuantile,
+      eff_number_cumulative
+    )
+  )
+colnames(plot_df_2) <- c("b1", "b2", "observed", "eff")
+
+plot2 <- ggplot(data = plot_df_2, aes(x = filled$Date, y = observed)) +
+  geom_line() +
+  #geom_line(aes(y=rep(log(ncol(filled_modified[,-1])),length(filled$Date))),linetype="dashed")+
+  geom_line(aes(y = rep(log(
+    ncol(filled_modified[, -1])
+  ), length(filled$Date))), col = "red") +
+  geom_ribbon(aes(ymin = b1, ymax = b2), alpha = 0.5) +
+  #geom_line(aes(y=log(eff)),col="red")+
+  # coord_cartesian(ylim=c(3.5,3.95))+ #S. Marco
+  coord_cartesian(ylim = c(3.5, 3.9)) +
+  scale_x_date(date_breaks = "12 months", date_labels = "%m-%Y") +
+  scale_y_continuous(
+    name = "Entropy (nats)",
+    sec.axis = sec_axis( #create second y-axis for effective number of parishes
+      trans =  ~ .,
+      name = "Effective Number",
+      labels = function(x)
+        scales::comma(round(exp(x)), accuracy = 1)
+    )
+  ) +
+  theme_bw() +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.background = element_blank(),
+    plot.background = element_rect(fill = "white"),
+    axis.title = element_text(size = 10),
+    plot.title = element_text(size = 12)
+  ) +
+  labs(y = "Entropy (nats)", x = "Date", title = "Entropy")
+
+# Order such that entropy graph is on the left and KL divergence graph is on the right
+plot_ls <- list(plot2, plot1)
+
+# Create grid
+untitled_grid <-
+  plot_grid(plotlist = plot_ls,
+            labels = c("a", "b"),
+            label_size = 12)
+# now add the title
+title <- ggdraw() +
+  draw_label(
+    "Quantile Function of Cumulative Mortality",
+    fontface = 'bold',
+    x = 0,
+    hjust = 0
+  ) +
+  theme(# add margin on the left of the drawing canvas,
+    # so title is aligned with left edge of first plot
+    plot.margin = margin(0, 0, 0, 7))
+plot_grid(title,
+          untitled_grid,
+          ncol = 1,
+          # rel_heights values control vertical title margins
+          rel_heights = c(0.1, 1))
+
+# Save figure
+
+#ggsave("CumulativeQuantileGrid_Final.png",width=2100,height=1200,units="px")
+#ggsave("CumulativeQuantileGrid_Final.jpg",width=2100,height=1200,units="px")
+#ggsave("~/VenetianPlague_Entropy/Figures/Figure2.png",width=2100,height=1200,units="px")
+#ggsave("~/VenetianPlague_Entropy/Figures/Figure2.jpg",width=2100,height=1200,units="px")
+# ggsave("~/VenetianPlague_Entropy/Figures_Final/Figure2.png",width=2100,height=1200,units="px")
+# ggsave("~/VenetianPlague_Entropy/Figures_Final/Figure2.jpg",width=2100,height=1200,units="px")
+# ggsave("~/VenetianPlague_Entropy/SMarcoCumulativeQuantile.png",width=2100,height=1200,units="px") #Supp Fig S4
+# ggsave("~/VenetianPlague_Entropy/SMarcoCumulativeQuantile.jpg",width=2100,height=1200,units="px")
+```
+
+### Figure 3
+
+Second, we create Figure 3, a grid plot consisting of:
+
+1. Shannon entropy of the PDF function of cumulative mortality for every day in the epidemic along with corresponding 95% confidence intervals
+2. KL divergence of the PDF of cumulative mortality from a Gaussian distribution with the same mean and variance as the data for every day in the epidemic along with corresponding 95% confidence intervals
+
+Note that if we included the parish of S. Marco above, this will instead generate Supplementary Figure S5.
+
+```{r plot results - figure 3, eval = FALSE}
+#1: sum, 2: shannonPDF, 3: shannonQuantile, 4: negentPDF, 5: uniformKL_PDF, 6: uniformKL_Quantile
+
+# ----
+# Documentation: Figure 3
+# Goal: create a grid plot of shannonPDF and negentPDF including 95% CIs
+# ----
+
+# Initialize dataframe containing 2.5th percentile values, 97.5th percentile values, and observed values of the entropy of the PDF
+plot_df <-
+  as.data.frame(
+    cbind(
+      stats_of_whole_boot_cumulative_50_2$b1[[2]],
+      stats_of_whole_boot_cumulative_50_2$b2[[2]],
+      stats_of_whole_cumulative_50_2$shannonPDF
+    )
+  )
+colnames(plot_df) <- c("b1", "b2", "observed")
+
+plot1 <- ggplot(data = plot_df, aes(x = filled$Date, y = observed)) +
+  geom_line() +
+  #geom_line(aes(y=rep(log(ceiling(log2(ncol(filled_modified[,-1])))+1),length(filled$Date))),linetype="dashed")+
+  geom_line(aes(y = rep(log(ceiling(
+    log2(ncol(filled_modified[, -1])) #ceiling(log2(N) + 1) is the number of bins under Sturges' Rule, but this should be the entropy of the Gaussian with the same mean and variance as the data on the final day
+  ) + 1), length(filled$Date))), col = "red") +
+  geom_ribbon(aes(ymin = b1, ymax = b2), alpha = 0.5) +
+  coord_cartesian(ylim = c(1, 2)) +
+  # coord_cartesian(ylim=c(0,2))+ #S. Marco
+  scale_x_date(date_breaks = "12 months", date_labels = "%m-%Y") +
+  scale_y_continuous() +
+  theme_bw() +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.background = element_blank(),
+    plot.background = element_rect(fill = "white"),
+    axis.title = element_text(size = 10),
+    plot.title = element_text(size = 12)
+  ) +
+  labs(y = "Entropy (nats)", x = "Date", title = "Entropy")
+
+# Initialize dataframe containing 2.5th percentile values, 97.5th percentile values, and observed values of the negentropy of the PDF
+plot_df_2 <-
+  as.data.frame(
+    cbind(
+      stats_of_whole_boot_cumulative_50_2$b1[[4]],
+      stats_of_whole_boot_cumulative_50_2$b2[[4]],
+      stats_of_whole_cumulative_50_2$negentPDF
+    )
+  )
+colnames(plot_df_2) <- c("b1", "b2", "observed")
+
+plot2 <- ggplot(data = plot_df_2, aes(x = filled$Date, y = observed)) +
+  geom_line() +
+  #geom_line(aes(y=funny_vec))+
+  geom_ribbon(aes(ymin = b1, ymax = b2), alpha = 0.5) +
+  geom_line(aes(y = rep(0, length(filled$Date))), col = "red") +
+  coord_cartesian(ylim = c(0, 0.45)) +
+  # coord_cartesian(ylim=c(0,1.5))+ #S. Marco
+  scale_x_date(date_breaks = "12 months", date_labels = "%m-%Y") +
+  scale_y_continuous() +
+  theme_bw() +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.background = element_blank(),
+    plot.background = element_rect(fill = "white"),
+    axis.title = element_text(size = 10),
+    plot.title = element_text(size = 12)
+  ) +
+  #labs(y=expression(paste(D[KL]," (nats)")),x="Date",title="Negentropy")
+  labs(y = "Negentropy (nats)", x = "Date", title = "Negentropy")
+
+# Experimental Analysis: KL divergence of PDF from uniform (excluded in final paper)
+# plot_df_3 <- as.data.frame(cbind(stats_of_whole_boot_cumulative_50_2$b1[[5]],stats_of_whole_boot_cumulative_50_2$b2[[5]],stats_of_whole_cumulative_50_2$uniformKL_PDF))
+# colnames(plot_df_3) <- c("b1","b2","observed")
+# plot3 <- ggplot(data=plot_df_3,aes(x=filled$Date,y=observed))+
+#   geom_line()+
+#   geom_ribbon(aes(ymin=b1,ymax=b2),alpha=0.5)+
+#   coord_cartesian(ylim=c(0,1))+
+#   scale_x_date(date_breaks="12 months",date_labels="%m-%Y")+
+#   scale_y_continuous()+
+#   theme(plot.background=element_rect(fill="white"),axis.title=element_text(size=10))+
+#   labs(y="KL Divergence",x="Date",title="KL Divergence from Uniform")
+# plot_ls <- list(plot1,plot2,plot3)
+# untitled_grid <- plot_grid(plotlist=plot_ls,labels=c("A","B","C"),label_size=12)
+
+# Order such that entropy graph is on the left and KL divergence graph is on the right
+plot_ls <- list(plot1, plot2)
+
+# Create the grid 
+untitled_grid <-
+  plot_grid(plotlist = plot_ls,
+            labels = c("a", "b"),
+            label_size = 12)
+
+# Add the title
+title <- ggdraw() +
+  draw_label(
+    "PDF of Cumulative Mortality",
+    fontface = 'bold',
+    x = 0,
+    hjust = 0
+  ) +
+  theme(# add margin on the left of the drawing canvas,
+    # so title is aligned with left edge of first plot
+    plot.margin = margin(0, 0, 0, 7))
+
+plot_grid(title,
+          untitled_grid,
+          ncol = 1,
+          # rel_heights values control vertical title margins
+          rel_heights = c(0.1, 1))
+
+# Save the plot
+
+#ggsave("cumulative_50_2_2PDFGrid5.png",width=2100,height=150_20,units="px")
+#ggsave("CumulativePDFGrid_Final.png",width=2100,height=1200,units="px")
+#ggsave("CumulativePDFGrid_Final.jpg",width=2100,height=1200,units="px")
+# ggsave("~/VenetianPlague_Entropy/Figures/Figure3.png",width=2100,height=1200,units="px")
+# ggsave("~/VenetianPlague_Entropy/Figures/Figure3.jpg",width=2100,height=1200,units="px")
+# ggsave("~/VenetianPlague_Entropy/Figures_Final/Figure3.png",width=2100,height=1200,units="px")
+# ggsave("~/VenetianPlague_Entropy/Figures_Final/Figure3.jpg",width=2100,height=1200,units="px")
+# ggsave("~/VenetianPlague_Entropy/SMarcoCumulativePDF.png",width=2100,height=1200,units="px") # Supp Fig S5
+# ggsave("~/VenetianPlague_Entropy/SMarcoCumulativePDF.jpg",width=2100,height=1200,units="px")
+```
+
+### Supplementary Figure S2
+
+Third, we create Supplementary Figure S2, a grid plot containing:
+
+1.  Shannon entropy of the quantile function of instantaneous mortality for every day in the epidemic along with corresponding 95% confidence intervals
+2.  KL divergence of the quantile function of instantaneous mortality from a uniform distribution for every day in the epidemic along with corresponding 95% confidence intervals
+
+```{r plot results - supplementary figure s2, eval = FALSE}
+#1: sum, 2: shannonPDF, 3: shannonQuantile, 4: negentPDF, 5: uniformKL_PDF, 6: uniformKL_Quantile
+#can plot against incidence ("sum") if you want
+
+#----
+# Documentation: Supplementary Figure S2
+# Goal: Grid plot with instantaneous shannonQuantile (left) and instantaneous uniformKL_PDF (right)
+#----
+
+# Initialize dataframe containing 2.5th percentile, 97.5th percentile, and observed values of KL divergence of the quantile function from a uniform distribution
+plot_df <-
+  as.data.frame(
+    cbind(
+      stats_of_whole_boot_instantaneous_50_2$b1[[6]],
+      stats_of_whole_boot_instantaneous_50_2$b2[[6]],
+      stats_of_whole_instantaneous_50_2$uniformKL_Quantile
+    )
+  )
+colnames(plot_df) <- c("b1", "b2", "observed")
+
+plot1 <- ggplot(data = plot_df, aes(x = filled$Date, y = observed)) +
+  geom_line(lwd = 0.25) +
+  geom_ribbon(aes(ymin = b1, ymax = b2), alpha = 0.5) +
+  geom_line(aes(y = rep(0, length(filled$Date))), col = "red") +
+  scale_x_date(date_breaks = "12 months", date_labels = "%m-%Y") +
+  scale_y_continuous() +
+  expand_limits(y = c(0, 2)) +
+  theme_bw() +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.background = element_blank(),
+    plot.background = element_rect(fill = "white"),
+    plot.title = element_text(size = 12),
+    axis.title = element_text(size = 10)
+  ) +
+  #labs(y=expression(D[K*L]),x="Date",title="Negentropy")
+  labs(y = "Negentropy (nats)", x = "Date", title = "Negentropy")
+
+# Initialize dataframe containing 2.5th percentile, 97.5th percentile, and original values of entropy of the quantile function
+plot_df_2 <-
+  as.data.frame(
+    cbind(
+      stats_of_whole_boot_instantaneous_50_2$b1[[3]],
+      stats_of_whole_boot_instantaneous_50_2$b2[[3]],
+      stats_of_whole_instantaneous_50_2$shannonQuantile,
+      log(non_zeroes_instantaneous)
+    )
+  )
+colnames(plot_df_2) <- c("b1", "b2", "observed", "nonzeroes")
+
+plot2 <- ggplot(data = plot_df_2, aes(x = filled$Date, y = observed)) +
+  #geom_line(aes(y=nonzeroes),lwd=0.25,col="red",alpha=0.75)+ #optional, plots number of parishes with non-zero deaths
+  geom_line(lwd = 0.25) +
+  geom_line(aes(y = rep(log(
+    ncol(filled_modified[, -1])
+  ), length(filled$Date))), col = "red") +
+  geom_ribbon(aes(ymin = b1, ymax = b2), alpha = 0.5) +
+  scale_x_date(date_breaks = "12 months", date_labels = "%m-%Y") +
+  scale_y_continuous() +
+  expand_limits(y = c(2, 4)) +
+  theme_bw() +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.background = element_blank(),
+    plot.background = element_rect(fill = "white"),
+    plot.title = element_text(size = 12),
+    axis.title = element_text(size = 10)
+  ) +
+  labs(y = "Entropy (nats)", x = "Date", title = "Entropy")
+
+# Order such that entropy graph is on the left and KL divergence graph is on the right
+plot_ls <- list(plot2, plot1)
+untitled_grid <-
+  plot_grid(plotlist = plot_ls,
+            labels = c("a", "b"),
+            label_size = 12)
+
+# Add the title
+title <- ggdraw() +
+  draw_label(
+    "Quantile Function of Instantaneous Mortality",
+    fontface = 'bold',
+    x = 0,
+    hjust = 0
+  ) +
+  theme(# add margin on the left of the drawing canvas,
+    # so title is aligned with left edge of first plot
+    plot.margin = margin(0, 0, 0, 7))
+
+# Create the grid 
+plot_grid(title,
+          untitled_grid,
+          ncol = 1,
+          # rel_heights values control vertical title margins
+          rel_heights = c(0.1, 1))
+
+# Save the figure
+
+#ggsave("InstantaneousQuantileGrid_Final_2.png",width=2100,height=1200,units="px")
+#ggsave("InstantaneousQuantileGrid_Final_2.jpg",width=2100,height=1200,units="px")
+#ggsave("InstantaneousQuantileGrid_Final.jpg",width=2100,height=1200,units="px")
+#ggsave("InstantaneousQuantileGrid_Final_3.jpg",width=2100,height=1200,units="px")
+# ggsave("InstantaneousQuantileGrid_Final_4.jpg",width=2100,height=1200,units="px") #Supp Fig S2
+```
+
+### Supplementary Figure S3
+
+Fourth, we create Supplementary Figure S3, a grid plot containing:
+
+1.  Shannon entropy of the PDF function of instantaneous mortality for every day in the epidemic along with corresponding 95% confidence intervals
+2.  KL divergence of the PDF of instantaneous mortality from a Gaussian distribution with the same mean and variance as the data for every day in the epidemic along with corresponding 95% confidence intervals
+
+```{r plot results - supplementary figure s3, eval = FALSE}
+#1: sum, 2: shannonPDF, 3: shannonQuantile, 4: negentPDF, 5: uniformKL_PDF, 6: uniformKL_Quantile
+
+#----
+# Documentation: Supplementary Figure S3
+# Goal: Grid plot of shannonPDF (left) and negentPDF (right) for instantaneous mortality data
+#----
+
+# Initialize dataframe containing 2.5th percentile, 97.5th percentile, and original values of the entropy of the PDF
+plot_df <-
+  as.data.frame(
+    cbind(
+      stats_of_whole_boot_instantaneous_50_2$b1[[2]],
+      stats_of_whole_boot_instantaneous_50_2$b2[[2]],
+      stats_of_whole_instantaneous_50_2$shannonPDF
+    )
+  )
+colnames(plot_df) <- c("b1", "b2", "observed")
+
+plot1 <- ggplot(data = plot_df, aes(x = filled$Date, y = observed)) +
+  geom_ribbon(aes(
+    x = filled$Date,
+    ymin = b1,
+    ymax = b2
+  ), alpha = 0.5) +
+  geom_line(lwd = 0.25) +
+  geom_line(aes(y = rep(log(ceiling(
+    log2(ncol(filled_modified[, -1]))
+  ) + 1), length(filled$Date))), col = "red") +
+  scale_x_date(date_breaks = "12 months", date_labels = "%m-%Y") +
+  scale_y_continuous() +
+  expand_limits(y = c(0, 2)) +
+  theme_bw() +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.background = element_blank(),
+    plot.background = element_rect(fill = "white"),
+    axis.title = element_text(size = 10),
+    plot.title = element_text(size = 12)
+  ) +
+  labs(y = "Entropy (nats)", x = "Date", title = "Entropy")
+
+# Initialize dataframe containing 2.5th percentile, 97.5th percentile, and original values of the negentropy of the PDF
+plot_df_2 <-
+  as.data.frame(
+    cbind(
+      stats_of_whole_boot_instantaneous_50_2$b1[[4]],
+      stats_of_whole_boot_instantaneous_50_2$b2[[4]],
+      stats_of_whole_instantaneous_50_2$negentPDF
+    )
+  )
+colnames(plot_df_2) <- c("b1", "b2", "observed")
+
+plot2 <- ggplot(data = plot_df_2, aes(x = filled$Date, y = observed)) +
+  geom_ribbon(aes(
+    x = filled$Date,
+    ymin = b1,
+    ymax = b2
+  ), alpha = 0.5) +
+  geom_line(lwd = 0.25) +
+  geom_line(aes(y = rep(0, length(filled$Date))), col = "red") +
+  scale_x_date(date_breaks = "12 months", date_labels = "%m-%Y") +
+  scale_y_continuous() +
+  coord_cartesian(ylim = c(0, 1.5)) +
+  theme_bw() +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.background = element_blank(),
+    plot.background = element_rect(fill = "white"),
+    axis.title = element_text(size = 10),
+    plot.title = element_text(size = 12)
+  ) +
+  labs(y = "Negentropy (nats)", x = "Date", title = "Negentropy")
+
+# Experimental Analysis: include KL divergence of the PDF from a uniform distribution (excluded in final paper)
+# plot_df_3 <- as.data.frame(cbind(stats_of_whole_boot_instantaneous_50_2$b1[[5]],stats_of_whole_boot_instantaneous_50_2$b2[[5]],stats_of_whole_instantaneous_50_2$uniformKL_PDF))
+# colnames(plot_df_3) <- c("b1","b2","observed")
+# plot3 <- ggplot(data=plot_df_3,aes(x=filled$Date,y=observed))+
+#   geom_ribbon(aes(x=filled$Date,ymin=b1,ymax=b2),alpha=0.5)+
+#   geom_line(lwd=0.25)+
+#   scale_x_date(date_breaks="12 months",date_labels="%m-%Y")+
+#   scale_y_continuous()+
+#   expand_limits(y=c(0,1.8))+
+#   theme(plot.background=element_rect(fill="white"),axis.title=element_text(size=10))+
+#   labs(y="KL Divergence",x="Date",title="KL Divergence from Uniform")
+
+# Order plots such that entropy graph is on the left and KL divergence graph is on the right
+plot_ls <- list(plot1, plot2)
+untitled_grid <-
+  plot_grid(plotlist = plot_ls,
+            labels = c("a", "b"),
+            label_size = 12)
+
+# Add the title
+title <- ggdraw() +
+  draw_label(
+    "PDF of Instantaneous Mortality",
+    fontface = 'bold',
+    x = 0,
+    hjust = 0
+  ) +
+  theme(# add margin on the left of the drawing canvas,
+    # so title is aligned with left edge of first plot
+    plot.margin = margin(0, 0, 0, 7))
+
+# Create the grid
+plot_grid(title,
+          untitled_grid,
+          ncol = 1,
+          # rel_heights values control vertical title margins
+          rel_heights = c(0.1, 1))
+
+# Save the figure
+
+#ggsave("InstantaneousPDFGrid_Final_2.png",width=2100,height=1200,units="px")
+#ggsave("InstantaneousPDFGrid_Final_2.jpg",width=2100,height=1200,units="px")
+#ggsave("InstantaneousPDFGrid_Final.jpg",width=2100,height=1200,units="px")
+#ggsave("InstantaneousPDFGrid_Final_3.jpg",width=2100,height=1200,units="px")
+# ggsave("InstantaneousPDFGrid_Final_4.jpg",width=2100,height=1200,units="px") # Supp Fig S3
+```
+
+### Figure 4
+
+Fifth, we create Figure 4, a plot of Shannon entropy of the quantile functions for each sestiere's cumulative mortality data along with the 95% confidence intervals generated from bootstrapping.
+
+```{r plot results - figure 4, eval = FALSE}
+#----
+# Documentation: Figure 4
+# Goal: Time series plot of shannonQuantile of each sestiere, differentiated via colors
+# ----
+
+stat_of_interest <-
+  3 #1: sum, 2: shannonPDF, 3: shannonQuantile, 4: negentPDF, 5: uniformKL_PDF, 6: uniformKL_Quantile
+b1_plot_mat <-
+  matrix(NA, nrow = 1095, ncol = 6) #6 = number of stats, not sestieri
+b2_plot_mat <- matrix(NA, nrow = 1095, ncol = 6)
+observed_plot_mat <- matrix(NA, nrow = 1095, ncol = 6)
+
+for (i in 1:6) { #6 = number of sestieri
+  b1_plot_mat[, i] <-
+    stats_by_sestiere_boot_cumulative_50_2[[i]]$b1[, stat_of_interest]
+  b2_plot_mat[, i] <-
+    stats_by_sestiere_boot_cumulative_50_2[[i]]$b2[, stat_of_interest]
+  observed_plot_mat[, i] <-
+    stats_by_sestiere_cumulative_50_2[[i]][[stat_of_interest]]
+}
+
+time_series <- 1:1095
+series_names <- unique(sestiere_df_modified$Sestiere)
+
+# Ensure matrices are data.frames
+lower_df <- as.data.frame(b1_plot_mat)
+upper_df <- as.data.frame(b2_plot_mat)
+observed_df <- as.data.frame(observed_plot_mat)
+
+# Add time column
+lower_df$time <- upper_df$time <- observed_df$time <- time_series
+
+# Pivot longer
+lower_long <-
+  pivot_longer(lower_df,-time, names_to = "series", values_to = "lower")
+upper_long <-
+  pivot_longer(upper_df,-time, names_to = "series", values_to = "upper")
+obs_long   <-
+  pivot_longer(observed_df,-time, names_to = "series", values_to = "observed")
+
+# Combine all into one long dataframe
+plot_df <- lower_long %>%
+  left_join(upper_long, by = c("time", "series")) %>%
+  left_join(obs_long, by = c("time", "series")) %>%
+  mutate(series = factor(series, levels = paste0("V", 1:6), labels = series_names))
+
+# Calculate the maximum possible entropy for each sestiere
+maxima_vec <- rep(0, length(unique(sestiere_df_modified$Sestiere)))
+for (s in unique(sestiere_df_modified$Sestiere)) {
+  maxima_vec[match(s, unique(sestiere_df_modified$Sestiere))] <-
+    log(length(sestiere_df_modified$Parish[sestiere_df_modified$Sestiere ==
+                                             s]))
+}
+
+# Add these maxima values as a column in the plot dataframe
+maxima_column <- rep(maxima_vec, nrow(filled_modified))
+plot_df$maxima <- maxima_column
+
+ggplot(plot_df, aes(
+  x = rep(filled$Date, each = 6),
+  group = series,
+  color = series,
+  fill = series
+)) +
+  geom_ribbon(aes(ymin = lower, ymax = upper),
+              alpha = 0.4,
+              color = NA) +
+  geom_line(aes(y = lower), linetype = "dashed", linewidth = 0.25) + #use dashed line to indicate maximum since color is already being used
+  geom_line(aes(y = upper), linetype = "dashed", linewidth = 0.25) +
+  geom_line(aes(y = observed), linewidth = 0.5) +
+  geom_line(aes(y = maxima), linetype = "dashed", linewidth = 0.75) +
+  scale_color_manual(values = c("green", "red", "blue", "yellow", "orange", "pink")) +
+  scale_fill_manual(values = c("green", "red", "blue", "yellow", "orange", "pink")) +
+  coord_cartesian(ylim = c(0.5, 2.5)) +
+  scale_y_continuous(
+    name = "Entropy (nats)",
+    # Create second axis for effective number
+    sec.axis = sec_axis( 
+      trans =  ~ .,
+      name = "Effective Number",
+      labels = function(x)
+        scales::comma(exp(x), accuracy = 0.1)
+    )
+  ) +
+  theme_bw() +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.background = element_blank(),
+    plot.background = element_rect(fill = "white")
+  ) +
+  labs(
+    title = "Quantile Function of Cumulative Mortality by Sestiere",
+    #title = names(stats_of_whole_cumulative_50_2)[stat_of_interest],
+    x = "Date",
+    y = "Entropy (nats)",
+    color = "Sestiere",
+    fill = "Sestiere"
+  )
+
+# Save figure
+
+#ggsave("CumulativeQuantile_KL_Sestiere_Final.png",width=2100,height=1500,units="px") #needs to be .jpg
+#ggsave("CumulativeQuantile_KL_Sestiere_Final.jpg",width=2100,height=1500,units="px")
+#ggsave("~/VenetianPlague_Entropy/Figures/Figure4.png",width=2100,height=1500,units="px")
+#ggsave("~/VenetianPlague_Entropy/Figures/Figure4.jpg",width=2100,height=1500,units="px")
+# ggsave("~/VenetianPlague_Entropy/Figures_Final/Figure4.png",width=2100,height=1500,units="px")
+# ggsave("~/VenetianPlague_Entropy/Figures_Final/Figure4.jpg",width=2100,height=1500,units="px")
+```
+
+### Figure 1
+
+The goal with Figure 1 is to illustrate how the distribution of disease evolves over the course of the epidemic. Given cumulative mortality data, we represent the distribution of disease in 3 ways: a choropleth map, a quantile function, and a PDF. We then isolate 3 time points corresponding to the start, peak, and end of the epidemic. Finally, we graph these representations at every time point, producing a 3x3 grid.
+
+#### Choropleth Maps
+
+The goal of this section is to generate both the choropleth maps as described above for Figure 1 as well as a GIF that cycles through the choropleth map at the end of every month (Supplementary Video S1).
+
+The following code is a modification of G. Lazzari and G. Colavizza's notebook titled "Venice deaths on Maps" published in their 2020 paper. Because the code comes from an older version of R that uses some packages that are no longer supported, the notebook must be run using a separate renv from the rest of this project. As such, we provide the code here for reference purposes but do not run it.
+
+```{r choropleth renv initialization, eval = FALSE}
+renv::init(repos="https://packagemanager.posit.co/cran/2020-09-25")
+# install.packages("rgdal")
+# install.packages("maptools")
+# install.packages("tmap")
+# install.packages("oce")
+```
+
+```{r choropleth load packages, eval = FALSE}
+# clean env. vars
+rm(list=ls()) 
+
+# packages for maps
+library(maptools) # gpclibPermit()
+library(tmap)
+library(rgdal)
+library(oce)
+library("RColorBrewer")
+
+# basic packages
+library("ggplot2")
+library(reshape2)
+library(dplyr)
+library(lubridate)
+```
+
+##### Load shap file for map skeleton
+
+```{r choropleth load shap file, eval = FALSE}
+shap = readOGR("~/VenetianPlague_Entropy/1729_PAR_CONF.shp")
+
+# 'id' does not seem to be useful --> remove it
+shap@data <- shap@data['NAME']
+```
+
+##### Original deaths on map
+
+###### Load clean dataset
+
+```{r choropleth load clean dataset, eval = FALSE}
+original_deaths <- read.csv('~/VenetianPlague_Entropy/ALL_utf.csv')
+# mind that NA have to be set to 0, ...
+# otherwise the aggregrated sum will be reduced to NA!, but...
+original_deaths[is.na(original_deaths)] <- 0 # cleaning NAs >> we'll set them back later to NA (***)
+
+# fix dates
+original_deaths$Date <- as.POSIXct(original_deaths$Date,format = '%m/%d/%Y')
+my_shift <- as.POSIXct('1629-01-01')
+original_deaths$Date <- original_deaths$Date - difftime(original_deaths$Date[1],my_shift )
+```
+
+###### aggregate over months
+
+(and set back NAs)
+
+```{r choropleth aggregate over months, eval = FALSE}
+# melt parishes
+melted_df  =  melt(original_deaths,'Date',variable.name = 'parish',value.name = 'deaths')
+
+# group over months, sum ...
+# credits to: https://ro-che.info/articles/2017-02-22-group_by_month_r 
+agg_melt_df = melted_df %>% group_by(month=floor_date(Date, "month"),parish=parish) %>% 
+      summarise(deaths = sum(deaths))
+
+jan_melted_df <- melted_df[melted_df$Date <= as.Date("1629-01-07",format="%Y-%m-%d"),]
+jan_agg_melt_df = jan_melted_df %>% group_by(month=floor_date(Date,"month"),parish=parish) %>% summarise(deaths=sum(deaths)) #substitute Jan with up to Jan 7
+
+agg_melt_df[1:70,] <- jan_agg_melt_df
+
+# ...and un-melt again
+agg_df = as.data.frame(t(dcast(agg_melt_df,month~parish,drop = FALSE)))
+
+#...and remove useless row
+agg_df = agg_df[-1,]
+
+# save parishes names as they will be canceledby next step
+parish_names = rownames(agg_df)
+
+# trasform all data to numeric 
+agg_df = as.data.frame(sapply(agg_df,function(x){as.numeric(as.character(x))}))
+
+#  (***) set parish with no deaths on the whole t-w to NAs!
+agg_df[rowSums(agg_df) == 0,] = NA
+
+# create name col
+agg_df$NAME = parish_names
+
+# remove vars of intermediate steps
+remove(melted_df,agg_melt_df,parish_names,jan_melted_df,jan_agg_melt_df)
+```
+
+###### sum over whole time window
+
+(don't run this section if you are not interested)
+
+create cols for sums and names and drop the rest (and set back NAs)
+
+```{r choropleth sum over whole time window, eval = FALSE}
+original_summed <- as.data.frame(colSums(original_deaths[,2:ncol(original_deaths)]))
+colnames(original_summed) <- 'Total_deaths'
+original_summed$NAME <- rownames(original_summed)
+remove(original_deaths)
+
+# remember we had to set NAs to 0 to avoid missing some data). Indeed now we have lost all NAs:
+sum(is.na(original_summed))
+# so we set it back to NA:
+original_summed[original_summed==0] = NA
+sum(is.na(original_summed))
+```
+
+###### merge deaths data into shape object
+
+fix col names to match names in shapes:
+
+```{r choropleth merge deaths data into shape object, eval = FALSE}
+#replace spaces with dots 
+shap@data$NAME <- sapply(shap@data$NAME, function(x) gsub('\\s','.',x))
+```
+
+fix col names to match names in dataset summed >> over all time-window <<
+
+```{r choropleth fix col names all-time, eval = FALSE}
+# the only problematic one is S..Giacomo.dell.Orio --> fixed it: 
+original_summed$NAME[original_summed$NAME=='S..Giacomo.dell.Orio'] <- 'S..Giacomo.dell\'Orio'
+
+# check (in)compatibility of names 
+sum(!(original_summed$NAME %in% shap@data$NAME)) # -- not bad ;), 0 mismatch!
+
+### view mismatches ### 
+View(shap@data[!(shap@data$NAME %in% original_summed$NAME),]) # 15 parishes 
+View(original_summed[!(original_summed$NAME %in% shap@data$NAME),])
+```
+
+fix col names to match names in dataset aggregated >> over month <<
+
+```{r choropleth fix col names month, eval = FALSE}
+# the only problematic one is S..Giacomo.dell.Orio --> fixed it: 
+agg_df$NAME[agg_df$NAME=='S..Giacomo.dell.Orio'] <- 'S..Giacomo.dell\'Orio'
+## check (in)compatibility of names 
+sum(!(agg_df$NAME %in% shap@data$NAME)) # -- not bad ;), 0 mismatch!
+
+### view mismatches ### 
+View(shap@data[!(shap@data$NAME %in% agg_df$NAME),]) # 15 parishes have no deaths counts -- it's fine
+View(agg_df[!(agg_df$NAME %in% shap@data$NAME),1:2]) 
+```
+
+merge data summed over --> all time window <--
+
+```{r choropleth merge data all-time, eval = FALSE}
+# keep track of original sorting -- before merging!!
+shap@data$id = rownames(shap@data)
+
+# actual merging
+shap@data = merge(shap@data,original_summed,
+                  by = 'NAME',all.x = TRUE,all.y = TRUE,sort = FALSE)
+
+# set id as numeric 
+shap@data$id = as.numeric(as.character(shap@data$id))
+# order df using previous id 
+shap@data = shap@data[order(shap@data$id),]
+```
+
+merge data aggregated --> over months <--
+
+```{r choropleth merge data months, eval = FALSE}
+
+# keep track of original sorting -- before merging!!
+#shap@data$id = rownames(shap@data) **Original Code**
+shap@data$id = shap@data$id+1
+
+# actual merging
+shap@data = merge(shap@data,agg_df,
+                  by = 'NAME',all.x = TRUE,sort = FALSE)
+
+# set id as numeric 
+shap@data$id = as.numeric(as.character(shap@data$id))
+# order df using previous id 
+shap@data = shap@data[order(shap@data$id),]
+
+# set deaths data as numeric
+shap@data[,3:ncol(shap@data)] = sapply(shap@data[,3:ncol(shap@data)],as.numeric)
+
+# fix col names
+months_names <- c(
+    "Jan 1629","Feb 1629","Mar 1629","Apr 1629","May 1629","Jun 1629","Jul 1629", "Aug 1629","Sep 1629","Oct 1629", "Nov 1629","Dec 1629", "Jan 1630","Feb 1630","Mar 1630","Apr 1630","May 1630","Jun 1630","Jul 1630", "Aug 1630","Sep 1630","Oct 1630", "Nov 1630","Dec 1630", "Jan 1631","Feb 1631","Mar 1631","Apr 1631","May 1631","Jun 1631","Jul 1631", "Aug 1631","Sep 1631","Oct 1631", "Nov 1631","Dec 1631"
+)
+# months_names <- c(
+#     "Cumulative Mortality up to Jan 1629","Cumulative Mortality up to Feb 1629","Cumulative Mortality up to Mar 1629","Cumulative Mortality up to Apr 1629","Cumulative Mortality up to May 1629","Cumulative Mortality up to Jun 1629","Cumulative Mortality up to Jul 1629", "Cumulative Mortality up to Aug 1629","Cumulative Mortality up to Sep 1629","Cumulative Mortality up to Oct 1629", "Cumulative Mortality up to Nov 1629","Cumulative Mortality up to Dec 1629", "Cumulative Mortality up to Jan 1630","Cumulative Mortality up to Feb 1630","Cumulative Mortality up to Mar 1630","Cumulative Mortality up to Apr 1630","Cumulative Mortality up to May 1630","Cumulative Mortality up to Jun 1630","Cumulative Mortality up to Jul 1630", "Cumulative Mortality up to Aug 1630","Cumulative Mortality up to Sep 1630","Cumulative Mortality up to Oct 1630", "Cumulative Mortality up to Nov 1630","Cumulative Mortality up to Dec 1630", "Cumulative Mortality up to Jan 1631","Cumulative Mortality up to Feb 1631","Cumulative Mortality up to Mar 1631","Cumulative Mortality up to Apr 1631","Cumulative Mortality up to May 1631","Cumulative Mortality up to Jun 1631","Cumulative Mortality up to Jul 1631", "Cumulative Mortality up to Aug 1631","Cumulative Mortality up to Sep 1631","Cumulative Mortality up to Oct 1631", "Cumulative Mortality up to Nov 1631","Cumulative Mortality up to Dec 1631"
+# )
+
+colnames(shap@data) <- c(c('NAME','id',"Total_deaths"),months_names)
+
+
+View(shap@data)
+```
+
+###### Plot cases on map
+
+(doc for space analysis/plot in R: <https://cran.r-project.org/doc/contrib/intro-spatial-rl.pdf> )
+
+in order to simplify the plot, we keep only labels for parishes with: N deaths > cut-off
+
+```{r choropleth plot cases, eval = FALSE}
+# names_cutoff = 
+
+# for(i in 1:length(original_summed$Total_deaths)){
+#   if(is.na(original_summed$Total_deaths[i])){
+#     original_summed$Total_deaths[i] <- 0
+#   }
+# }
+# original_summed$Total_deaths
+# rownames(original_summed) <- gsub("S..Giacomo.dell.Orio","S..Giacomo.dell\'Orio",rownames(original_summed))
+
+my_name = function(x,cutoff=1000){
+    # if(!x %in% rownames(original_summed)){
+    #   print(x)
+    #   return(NA)
+    # }
+    # if ((original_summed$Total_deaths[rownames(original_summed)==x] > cutoff) & 
+    #     !is.na(original_summed$Total_deaths[rownames(original_summed)==x])){
+    #     return(x)
+    # }
+    if ((shap@data$Total_deaths[shap@data$NAME==x] > cutoff) & 
+        !is.na(shap@data$Total_deaths[shap@data$NAME==x])){
+        return(x)
+    }
+    else{
+        return(NA)
+    }
+    
+}
+
+shap@data$names_cutoff = sapply(shap@data$NAME,my_name)
+
+# shap@data <- shap@data[-c(71:85),]
+#shap@data <- shap@data[order(shap@data$NAME),] #needs to be reordered somehow
+invperm <- read.csv("~/LegacyVeniceParishMaps/invperm.csv")
+invperm <- invperm$x
+#shap@data <- shap@data[shap@plotOrder,]
+#shap@data <- shap@data[invperm,]#seems to have no effect while the other permutations of the elements did?
+View(shap@data)
+
+```
+
+Import population data and convert to mortality data
+
+```{r choropleth import population data, eval = FALSE}
+population_pre <- read.csv("~/VenetianPlague_Entropy/ParishPopulationsPre.csv")
+population_post <- read.csv("~/VenetianPlague_Entropy/ParishPopulationsPost.csv")
+
+colnames(population_pre) <- c("Parish", "Population_1509", "Population_1551", "Population_1581", "Population_1586")
+
+population_pre$Parish <- gsub("[[:space:]]",".",population_pre$Parish)
+population_post$Parish <- gsub("[[:space:]]",".",population_post$Parish)
+
+non_NAs <- c()
+for(i in 1:length(shap@data$NAME)){
+  if(length(which(!is.na(shap@data[i,4:ncol(shap@data)]))) != 0){
+    non_NAs <- c(non_NAs,i)
+  }
+}
+
+for(i in 1:length(shap@data$NAME[non_NAs])){
+  if(!shap@data$NAME[non_NAs][i] %in% population_pre$Parish){
+    print(shap@data$NAME[non_NAs][i])
+  }
+}
+
+population_pre$Parish <- gsub("S..Giacomo.dell.Orio","S..Giacomo.dell'Orio",population_pre$Parish)
+
+for(i in 1:length(shap@data$NAME[non_NAs])){
+  if(!shap@data$NAME[non_NAs][i] %in% population_post$Parish){
+    print(shap@data$NAME[non_NAs][i])
+  }
+}
+
+for(j in 1:ncol(population_pre)){
+  if(j == 1){
+    next
+  }
+  for(i in 1:nrow(population_pre)){
+    population_pre[i,j] <- format(as.numeric(population_pre[i,j]),nsmall=3)
+    if(nchar(population_pre[i,j]) < 7){
+      population_pre[i,j] <- as.numeric(population_pre[i,j])*1000
+    } else {
+      population_pre[i,j] <- as.numeric(population_pre[i,j])
+    }
+  }
+  population_pre[,j] <- as.numeric(population_pre[,j])
+}
+
+interpolated_1629 <- as.data.frame(matrix(nrow=length(population_pre$Population_1586),ncol=2))
+colnames(interpolated_1629) <- c("Parish","Population")
+interpolated_1629$Parish <- population_pre$Parish
+interpolated_1629$Population <- (20.45589-(1-0.8990027)*population_pre$Population_1586)*43/110 + population_pre$Population_1586
+
+for(i in 1:nrow(shap@data)){
+  if(shap@data$NAME[i] %in% interpolated_1629$Parish){
+    # print(shap@data$NAME[i])
+    # print(match(shap@data$NAME[i],interpolated_1629$Parish))
+    shap@data[i,3:(ncol(shap@data)-1)] <- shap@data[i,3:(ncol(shap@data)-1)]/interpolated_1629$Population[match(shap@data$NAME[i],interpolated_1629$Parish)]
+  }
+}
+```
+
+Convert to cumulative mortality data
+
+```{r choropleth convert to cumulative, eval = FALSE}
+for(i in 1:nrow(shap@data)){ #comment this part out if you want instantaneous
+  shap@data[i,4:(ncol(shap@data)-1)] <- cumsum(as.numeric(shap@data[i,4:(ncol(shap@data)-1)]))
+}
+```
+
+map cases >>> by month <<<
+
+```{r choropleth map cases monthly, eval = FALSE}
+library(sf)
+pdf('map_monthly_cases.pdf',height = 6, width = 12)
+#require(sf)
+
+#shap@data <- shap@data[,which(!is.na(colnames(shap@data)))]
+#shap@data$Total_deaths <- c(original_summed$Total_deaths[match(rownames(original_summed),shap@data$NAME)],rep(0,15))
+
+sf_use_s2(FALSE) #does this screw something up
+# (parishes names makes plot unreadable)
+
+#monthlyshannon <- read.csv("~/LegacyVeniceParishMaps/monthlyshannon.csv")
+#monthlyshannon <- read.csv("~/LegacyVeniceParishMaps/monthlyshannonvec2.csv")
+monthlyshannon <- read.csv("~/LegacyVeniceParishMaps/monthlyshannonvec3.csv")
+monthlyshannon <- monthlyshannon$x
+
+# for(i in 1:length(colnames(shap@data)[20:(ncol(shap@data)-1)])){
+#   colnames(shap@data)[20:(ncol(shap@data)-1)][i] <- paste(colnames(shap@data)[20:(ncol(shap@data)-1)][i],round(monthlyshannon[i],2)) 
+# }
+full_months_names <- c(
+    "January 1629","February 1629","March 1629","April 1629","May 1629","June 1629","July 1629", "August 1629","September 1629","October 1629", "November 1629","December 1629", "January 1630","February 1630","March 1630","April 1630","May 1630","June 1630","July 1630", "August 1630","September 1630","October 1630", "November 1630","December 1630", "January 1631","February 1631","March 1631","April 1631","May 1631","June 1631","July 1631", "August 1631","September 1631","October 1631", "November 1631","December 1631"
+)
+
+shap@data[1,] <- c("S..Marco",1,rep(as.numeric(NA),38)) 
+shap@data[21,] <- c("S..Polo",21,rep(as.numeric(NA),38)) 
+shap@data[29,] <- c("S..Stae",29,rep(as.numeric(NA),38))
+
+for(i in 2:39){
+  shap@data[,i] <- as.numeric(shap@data[,i])
+}
+
+pl <- list()
+for(i in (4:(ncol(shap@data)-1))){
+  # pl <- c(pl,list(qtm(shap,fill = colnames(shap@data)[i],fill.n=8,fill.breaks=seq(0,0.7,length.out=8))+tm_legend(legend.position=c("right","top"),scale=0.8)))
+  pl <- c(pl,list(qtm(shap,fill = colnames(shap@data)[i],fill.n=8,fill.breaks=seq(0,0.7,length.out=8))+tm_legend(legend.position=c("right","top"),scale=0.8)+tm_layout(frame=FALSE))) #,main.title=paste("Distribution of Cumulative Mortality up to",full_months_names[i-3]),main.title.size=3))) #"with Instantaneous Entropy of",round(monthlyshannon[i-3],2))
+}
+
+# plot_list3 <- list(plot1=pl[[18]],plot2=pl[[24]],plot3=pl[[34]])
+# save(plot_list3,file="plot_list3.RData")
+# print(plot_list3)
+# plot_list4 <- list(plot1=pl[[6]],plot2=pl[[24]],plot3=pl[[34]])
+# save(plot_list4,file="plot_list4.RData")
+# print(plot_list4)
+# plot_list5 <- list(plot1=pl[[3]],plot2=pl[[22]],plot3=pl[[36]])
+# save(plot_list5,file="plot_list5.RData")
+# plot_list6 <- list(plot1=pl[[2]],plot2=pl[[22]],plot3=pl[[36]])
+# print(plot_list6)
+#save(plot_list6,file="plot_list6.RData")
+```
+Save the plots for Figure 1 (would normally be uncommented)
+```{r choropleth save plot, eval = FALSE}
+# CURRENT 7_8_26 (START OF UNCOMMENT SECTION)
+#plot_list7 <- list(plot1=pl[[1]],plot2=pl[[22]],plot3=pl[[36]])
+#print(plot_list7)
+#save(plot_list7,file="plot_list7.RData")
+
+# tmap_save(tmap_arrange(pl[[18]],pl[[24]],pl[[34]],ncol=3),filename="gridof3.png",width=2560,height=900,units="px")
+# END OF CURRENT 7_8_26 (END OF UNCOMMENT SECTION)
+```
+Create the GIF (Supplentary Video S1).
+```{r choropleth create GIF, eval = FALSE}
+#current.mode <- tmap_mode("plot")
+#tmap_save(tmap_arrange(pl[[9]],pl[[18]],pl[[27]],pl[[36]]),filename="gridmap_final.png",width=2560,height=1600,units="px")
+#tmap_mode(current.mode)
+
+
+#tmap_animation(pl,width=1920,height=1080,filename="incidencemap_final.gif")
+
+qtm(shap,fill = colnames(shap@data)[20:(ncol(shap@data)-1)],fill.n=8,fill.breaks=seq(0,0.7,length.out=8))
+
+#names_cutoff is wrong because the cutoff is based on total cases not incidence rate
+#Also change variable to say Cumulative_incidence_rate not Total_deaths
+
+dev.off()
+
+### testing on single month 
+# qtm(shap, text = 'NAME', text.size = 0.5, fill = c('january 1631'))
+```
+
+map with labels >>> total cases <<<
+
+```{r choropleth map with labels, eval = FALSE}
+pdf('map_total_cases_with_labels.pdf',height = 6, width = 12)
+
+tm_shape(shap) + tm_fill('Total_deaths') + tm_text('NAME', size = 0.5 , col = 'black') + tm_layout(bg.color="lightblue") 
+
+## saving
+dev.off()
+```
+
+here we fix the text going over boundary -- in the two-row name (fttb, we change only the only problematic one)
+
+```{r choropleth fix text, eval = FALSE}
+shap@data$names_cutoff[shap@data$NAME=='S..Pietro.di.Castello'] = 'S..Pietro\ndi.Castello'
+
+View(shap@data[shap@data$NAME=='S..Pietro.di.Castello',])
+```
+
+map with labels >>> total cases <<< -- version with less (cutoff) labels
+
+```{r choropleth map reduced labels, eval = FALSE}
+pdf('map_total_cases_with_labels_cutoff.pdf',height = 6, width = 12)
+# qtm(shap,'Total_deaths',text = 'names_cutoff', text.size = 0.8,text.col = 'black')
+
+tm_shape(shap) + tm_fill('Total_deaths') + tm_text('names_cutoff', size = 0.8 , col = 'black') + tm_layout(bg.color="lightblue")
+
+
+## saving
+dev.off()
+```
+
+map total cases without labels
+
+```{r choropleth total cases no labels, eval = FALSE}
+# pdf('map_total_cases_no_labels.pdf',height = 6, width = 12)
+qtm(shap,'Total_deaths')
+
+#TWO THINGS TO FIX: 1. the names are mixed up 2. the colors are in the wrong place
+
+## saving
+dev.off()
+```
+
+#### PDF and Quantile Graphs
+
+In this section, we will generate the PDF and Quantile Graphs included in Figure 1. For the quantile function and PDF graphs, we overlay the corresponding maximum entropy distribution in red.
+
+First, we define our functions.
+
+```{r PDF_and_Quantile_graphs, eval = FALSE}
+# Find the indices in filled$Date of the last day of every month
+end_of_month_indices <- c(which(day(filled$Date) == 1)[-1] - 1, 1095)
+
+# Create a new negent function that provides debugging information when NAs are present
+negent_new <- function (x, K = ceiling(log2(length(x))) + 1){ # K = number of bins
+  p <- table(cut(x, breaks = K))/length(x)
+  sigma2 <- var(x)
+  #p <- p[(p > 0)]
+  bins <- seq(min(x), max(x), length.out = K + 1)
+  bins2 <- rep(0, K)
+  for(i in 1:K){
+    bins2[i] <- (bins[i] + bins[i+1]) / 2
+  }
+  y <- dnorm(bins2, mean = mean(x), sd = sd(x))
+  y <- y / sum(y)
+  if(length(which(is.na(y))) == K){
+    y <- rep(0, K)
+  }
+  if(length(as.numeric(p)) != length(y)){
+    print("Something went wrong")
+    print(paste("p", length(as.numeric(p))))
+    print(as.numeric(p))
+    print(paste("y", length(y)))
+    print(y)
+  } else if(anyNA(as.numeric(p))){
+    print(paste("p had an NA", as.numeric(p)))
+  } else if(anyNA(y)){
+    print(paste("y had an NA", y))
+  }
+  return(KL_new(as.numeric(p), y))
+  #return(log(2 * pi * exp(1)*sigma2)*1/2 + sum(p * log(p)))
+}
+
+# Create a modified PDF approximation function that adds a small epsilon to avoid NAs
+PDF_approx_new <- function (x, K = ceiling(log2(length(x))) + 1, epsilon = 1e-05){
+  p <- table(cut(x+epsilon, breaks = K))/length(x)
+  #p <- p[(p > 0)]
+  return(p)
+  #return(log(2 * pi * exp(1)*sigma2)*1/2 + sum(p * log(p)))
+}
+```
+
+While we use histogram approximation of the PDF with bin number determined by Sturges' rule in the analysis, for the purposes of illustration we use an Epanechnikov kernel with 512 bins in this figure.
+
+```{r PDF_epanechnikov, eval = FALSE}
+# Define the PDF approximation function using an Epanechnikov kernel of 512 bins
+PDF_approx_epanechnikov <- function (cv){
+  #kern <- density(cv,n=512,from=0,to=max(cv),kernel="epanechnikov",bw="bcv")$y
+  kern <- density(cv, n = 512, from = min(cv), to = max(cv), bw = "nrd0")$y
+  kern <- kern / sum(kern)
+  return(kern)
+}
+
+#----
+# Documentation: normal_approx
+# Usage: normal_approx(x, K)
+# @description: Takes in a vector of mortality at a given time point and generates a histogram approximation of a Gaussian distribution with identical mean and variance to the data
+
+# Arguments/Options:
+# @param x: a vector containing the mortality rates of each parish at a specific point in time
+# @param K: the number of bins to use (DEFAULT: ceiling(log2(length(x))) + 1), Sturges' Rule)
+
+# @return: a vector of length K containing the densities in each bin of the normal distribution as described above
+#----
+normal_approx <- function (x, K = ceiling(log2(length(x))) + 1){
+  bins <- seq(min(x), max(x), length.out = K + 1)
+  bins2 <- rep(0, K)
+  for(i in 1:K){
+    bins2[i] <- (bins[i] + bins[i + 1]) / 2
+  }
+  y <- dnorm(bins2, mean = mean(x), sd = sd(x))
+  y <- y / sum(y)
+  return(y)
+  #return(log(2 * pi * exp(1)*sigma2)*1/2 + sum(p * log(p)))
+}
+
+#months_vec <- c(12,24,34)
+# Find the indices for 1) January 7, 1629, 2) October 31, 1630, and 3) December 31, 1631
+days_vec <- c(7, end_of_month_indices[22], end_of_month_indices[36])
+
+#par(mfrow=c(1,2)) #create matrix
+new_negent <- rep(0, length(days_vec))
+old_negent <- rep(0, length(days_vec))
+shannon_normal <- rep(0, length(days_vec))
+
+quantile_graph_list <- vector(mode = "list", length = 3)
+PDF_graph_list <- vector(mode = "list", length = 3)
+grobbed_tmap_list <- vector(mode = "list", length = 3)
+title_list <- vector(mode = "list", length = 3)
+
+# Choropleth plot
+load(file = "~/Downloads/plot_list7.RData")
+
+# for(i in 1:length(end_of_month_indices)){
+#   day <- end_of_month_indices[i]
+#   case_vec <- as.numeric(colSums(filled_modified[1:day,-1]))/(population_specified_modified$Population*1000)
+#   var_mean <- sd(case_vec)/mean(case_vec)
+#   plot(PDF_approx_epanechnikov(case_vec),main=paste(filled$Date[day],round(stats_of_whole_cumulative_50_2$negentPDF[day],4)))
+# }
+
+# Initialize matrix to calculate coefficient of variation and 95% CI using 999 resamplings
+coeff_var_mat <- matrix(NA, nrow = 999, ncol = 3)
+
+for(i in 1:999) {
+  indices <- sample(1:ncol(filled_modified[,-1]), replace = TRUE)
+  booted_data <- filled_modified[,-1][, indices]
+  pop_spec <- population_specified_modified[indices, ]
+  for (j in days_vec) {
+    day <- j
+    case_vec <-
+      as.numeric(colSums(booted_data[1:day, ])) / (pop_spec$Population * 1000)
+    var_mean <- sd(case_vec) / mean(case_vec)
+    coeff_var_mat[i, match(j, days_vec)] <- var_mean
+  }
+}
+sort(coeff_var_mat[,1], decreasing = FALSE)[25] #January 7, 1629 low
+sort(coeff_var_mat[,1], decreasing = FALSE)[975] #January 7, 1629 high
+sort(coeff_var_mat[,2], decreasing = FALSE)[25] #December 31, 1631 low
+sort(coeff_var_mat[,2], decreasing = FALSE)[975] #December 31, 1631 high
+sort(coeff_var_mat[,3], decreasing = FALSE)[25] #October 31, 1630 low
+sort(coeff_var_mat[,3], decreasing = FALSE)[975] #October 31, 1630 high
+
+for(i in days_vec){
+  day <- i
+  case_vec <- as.numeric(colSums(filled_modified[1:day,-1])) / (population_specified_modified$Population * 1000)
+  var_mean <- sd(case_vec) / mean(case_vec)
+  print(var_mean)
+  case_vec_norm <- case_vec / sum(case_vec)
+  q_func <- sort(case_vec_norm)
+  pdf_vec <- as.numeric(PDF_approx_new(case_vec))
+  normal <- normal_approx(case_vec)
+  shannon_normal[match(i, days_vec)] <- -1 * sum(normal[normal != 0] * log(normal[normal != 0]))
+  
+  # plot(pdf_vec,main=paste(filled$Date[day],round(var_mean,3))) # PDF
+  # lines(normal_approx(case_vec),col="red")
+  # barplot(q_func) #quantile
+  # plot(PDF_approx_epanechnikov(case_vec))
+  
+  new_negent[match(i, days_vec)] <- negent_new(case_vec)
+  old_negent[match(i, days_vec)] <- negent(case_vec)
+  max_ent_uniform <- rep(1/length(case_vec_norm), length(case_vec_norm))
+  q_func_df <- as.data.frame(cbind(q_func,max_ent_uniform))
+  
+  # Generate quantile function graphs 
+  
+  # Increase y limits for graph from January 7, 1629 since the small number of total cases leads to large proportions in individual parishes
+  if(match(i, days_vec) == 1) {
+    quantile_graph <-
+      ggplot(data = q_func_df, aes(y = q_func, x = seq(1, ncol(filled_modified[, -1])))) +
+      geom_bar(stat = "identity") +
+      geom_bar(
+        aes(y = max_ent_uniform),
+        stat = "identity",
+        fill = "red",
+        alpha = 0.25
+      ) +
+      labs(y = "Normalized Mortality", x = "Parishes Ranked by Mortality") +
+      coord_cartesian(ylim = c(0, 0.15)) +
+      theme_bw() +
+      theme(
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        plot.margin = margin(5.5, 5.5, 5.5, 5.5),
+        axis.title = element_text(size = 10)
+      )
+    # Only title the first graph to avoid redundancy
+    quantile_graph <- quantile_graph + ggtitle("Quantile Function")
+  } else {
+    quantile_graph <-
+      ggplot(data = q_func_df, aes(y = q_func, x = seq(1, ncol(filled_modified[, -1])))) +
+      geom_bar(stat = "identity") +
+      geom_bar(
+        aes(y = max_ent_uniform),
+        stat = "identity",
+        fill = "red",
+        alpha = 0.25
+      ) +
+      labs(y = "Normalized Mortality", x = "Parishes Ranked by Mortality") +
+      coord_cartesian(ylim = c(0, 0.04)) +
+      theme_bw() +
+      theme(
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        plot.margin = margin(5.5, 5.5, 5.5, 5.5),
+        axis.title = element_text(size = 10)
+      )
+  }
+  
+  # Generate PDF graphs
+  
+  K <- ceiling(log2(length(case_vec))) + 1
+  bins <- seq(min(case_vec), max(case_vec), length.out = K + 1)
+  bins2 <- rep(0, K)
+  for(j in 1:K){
+    bins2[j] <- (bins[j] + bins[j+1]) / 2
+  }
+  bins3 <- seq(from = min(case_vec), to = max(case_vec), length.out = 512)
+  pdf_vec_2 <- PDF_approx_epanechnikov(case_vec)
+  max_ent_normal <- dnorm(bins3, mean = mean(case_vec), sd = sd(case_vec))
+  max_ent_normal <- max_ent_normal / sum(max_ent_normal)
+  pdf_df <- data.frame(x = bins3, y = pdf_vec_2, y2 = max_ent_normal)
+  
+  # Increase y limits for the graph on January 6, 1629 for the same reason as before
+  if(match(i, days_vec) == 1) {
+    PDF_graph <- ggplot(data = pdf_df, aes(x = x, y = y)) +
+      geom_density(
+        stat = "identity",
+        fill = "darkgrey",
+        alpha = 0.5,
+        lwd = 0.25
+      ) +
+      geom_density(
+        aes(y = y2),
+        stat = "identity",
+        fill = "red",
+        alpha = 0.25,
+        lwd = 0.25
+      ) +
+      labs(y = "Normalized Parish Count", x = "Cumulative Mortality") +
+      coord_cartesian(ylim = c(0, 0.01)) +
+      theme_bw() +
+      theme(
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        plot.margin = margin(5.5, 5.5, 5.5, 5.5),
+        axis.title = element_text(size = 10)
+      )
+    # Only title the first graph to avoid redundancy
+    PDF_graph <- PDF_graph + ggtitle("PDF")
+  } else {
+    PDF_graph <- ggplot(data = pdf_df, aes(x = x, y = y)) +
+      geom_density(
+        stat = "identity",
+        fill = "darkgrey",
+        alpha = 0.5,
+        lwd = 0.25
+      ) +
+      geom_density(
+        aes(y = y2),
+        stat = "identity",
+        fill = "red",
+        alpha = 0.25,
+        lwd = 0.25
+      ) +
+      labs(y = "Normalized Parish Count", x = "Cumulative Mortality") +
+      coord_cartesian(ylim = c(0, 0.006)) +
+      theme_bw() +
+      theme(
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank(),
+        plot.margin = margin(5.5, 5.5, 5.5, 5.5),
+        axis.title = element_text(size = 10)
+      )
+  }
+  quantile_graph_list[[match(i, days_vec)]] <- quantile_graph
+  
+  if(match(i,days_vec) == 1){
+    tmap_plot <- plot_list7[[match(i, days_vec)]] +
+      tm_layout(
+        # Add spaces to the title to align the title with the other two
+        main.title="    Choropleth Map",
+        main.title.size=1.1,
+        #legend.text.size = .55,
+        outer.margins = c(0, 0, 0, 0),
+        inner.margins = c(0, 0, 0, 0),
+        frame = FALSE
+      )
+  } else{
+    tmap_plot <- plot_list7[[match(i, days_vec)]] +
+      tm_layout(
+        main.title = " ",
+        main.title.size = 1.1,
+        #legend.text.size = .55,
+        outer.margins = c(0, 0, 0, 0),
+        inner.margins = c(0, 0, 0, 0),
+        frame = FALSE
+      )
+  }
+  grobbed_tmap_plot <- tmap_grob(tmap_plot)
+
+  grobbed_tmap_list[[match(i, days_vec)]] <- grobbed_tmap_plot
+
+  PDF_graph_list[[match(i, days_vec)]] <- PDF_graph
+  
+  PDF_and_quantile_graph <- plot_grid(plotlist = list(PDF_graph,quantile_graph))
+  
+  #untitled_grid <- plot_grid(plotlist=list(PDF_and_quantile_graph,heatmap_plot))
+  
+  title <- ggdraw() + 
+    draw_label(
+      filled$Date[day],
+      fontface = 'bold',
+      x = 0,
+      hjust = 0
+    ) +
+    theme(
+      # add margin on the left of the drawing canvas,
+      # so title is aligned with left edge of first plot
+      plot.margin = margin(0, 0, 0, 7)
+    )
+  title_list[[match(i,days_vec)]] <- title
+  overall_graph <- plot_grid(
+    title, PDF_and_quantile_graph,
+    ncol = 1, nrow = 2,
+    # rel_heights values control vertical title margins
+    rel_heights = c(0.1, 1)
+  )
+  print(overall_graph)
+}
+par(mfrow = c(1, 1)) #reset default gridding layout
+
+# Initialize lists to construct the 3x3 grid
+master_plot_list <- vector(mode = "list", length = 9)
+master_plot_list_1 <- vector(mode = "list", length = 3)
+master_plot_list_2 <- vector(mode = "list", length = 3)
+master_plot_list_3 <- vector(mode = "list", length = 3)
+
+# First, append all of the choropleth maps
+for(k in 1:length(days_vec)){
+  master_plot_list[[k]] <- grobbed_tmap_list[[k]]
+  master_plot_list_1[[k]] <- grobbed_tmap_list[[k]]
+}
+
+# Next, append all of the quantile function figures
+for(k in 4:6){
+  master_plot_list[[k]] <- quantile_graph_list[[k-3]]
+  master_plot_list_2[[k-3]] <- quantile_graph_list[[k-3]]
+}
+
+# Finally, append all of the PDF figures
+for(k in 7:9){
+  master_plot_list[[k]] <- PDF_graph_list[[k-6]]
+  master_plot_list_3[[k-6]] <- PDF_graph_list[[k-6]]
+}
+
+# Group by row and give the corresponding label to the first graph of every row
+plot_grid_1 <- plot_grid(plotlist = master_plot_list_1, ncol = 3, nrow = 1, align = "hv", axis = "tblr", labels = c("a", "", ""), label_size = 12)
+plot_grid_2 <- plot_grid(plotlist = master_plot_list_2, ncol = 3, nrow = 1, align = "hv", axis = "tblr", labels = c("b", "", ""), label_size = 12)
+plot_grid_3 <- plot_grid(plotlist = master_plot_list_3, ncol = 3, nrow = 1, align = "hv", axis = "tblr", labels = c("c", "", ""), label_size = 12)
+
+# Generate the final plot as a group of the three rows
+plot_grid(plot_grid_1, plot_grid_2, plot_grid_3, nrow = 3, align = "hv", axis = "tblr")
+
+plot_grid(plotlist = master_plot_list, ncol = 3, nrow = 3, align = 'hv', axis = 'tblr', labels = c("a", "", "", "b", "", "", "c", "", ""), label_size = 12)
+
+# Save the figure
+
+#ggsave("Gridded_Incidence_Map_Final.png",width=2900,height=1800,units="px")
+#ggsave("Gridded_Incidence_Map_Final_10.png", width = 3000, height = 1800, units = "px")
+#ggsave("~/VenetianPlague_Entropy/Figures_Final/Figure1v2.png", width = 3000, height = 1800, units = "px")
+#ggsave("~/VenetianPlague_Entropy/Figures_Final/Figure1v2.jpg", width = 3000, height = 1800, units = "px")
+
+# plot.ts(new_negent,col="red",ylim=c(0,2))
+# lines(old_negent)
+```
+
+#### Supplementary Figure S7 (Mortality Graphs)
+
+In this section, we generate the mortality graphs seen in Supplementary Figure S7.
+
+```{r mortality graphs, eval = FALSE}
+outliers <- c("S.Polo", "S.Stae","S.Marco") #No cases between 9/1/30 and 12/31/30, outbreak time
+
+filled_nodate <- filled[,-1]
+outlier_indices <- which(colnames(filled_nodate) %in% outliers)
+total_deaths <- colSums(filled_nodate[1:1095,])
+
+print(colnames(filled_nodate) == population_specified$Parish)
+
+export_df <- as.data.frame(cbind(1:ncol(filled_nodate), total_deaths, population_specified$Population * 1000))
+write.csv(export_df, "total_deaths.csv")
+
+print(outlier_indices)
+
+mort_df <- as.data.frame(matrix(NA, ncol = 3, nrow = 1095))
+colnames(mort_df) <- c("Date", "Mort", "CumMort")
+mort_df$Date <- as.Date(filled$Date)
+
+for(i in 1:1095){
+  mort_df[i,2] <- sum(as.numeric(filled_nodate[i,]) / (population_specified$Population * 1000)) / ncol(filled_nodate)
+  mort_df[i,3] <- sum(as.numeric(colSums(filled_nodate[1:i,])) / (population_specified$Population * 1000)) / ncol(filled_nodate)
+}
+
+regions <- tibble(x1 = as.Date("1630-09-01"), x2 = as.Date("1630-12-31"), y1 = -Inf, y2 = +Inf)
+
+daily_mort_plot <- ggplot(mort_df)+
+  geom_rect(data = regions, inherit.aes = FALSE, mapping = aes(xmin = x1, xmax = x2, ymin = y1, ymax = y2),color = "transparent",fill = "blue", alpha = 0.2)+
+  geom_line(aes(x = as.Date(Date), y = Mort))+
+  labs(x = "Date", y = "Mean Daily Parish Mortality", title = "Daily Mortality")+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.title = element_text(size = 10))
+
+cumulative_mort_plot <- ggplot(mort_df)+
+  geom_rect(data = regions, inherit.aes = FALSE, mapping = aes(xmin = x1, xmax = x2, ymin = y1, ymax = y2), color = "transparent", fill = "blue", alpha = 0.2)+
+  geom_line(aes(x = as.Date(Date), y = CumMort))+
+  labs(x = "Date", y = "Mean Cumulative Parish Mortality", title = "Cumulative Mortality")+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.title = element_text(size = 10))
+
+untitled_grid <- plot_grid(plotlist = list(daily_mort_plot, cumulative_mort_plot),labels = c("a", "b"), label_size = 12)
+
+title <- ggdraw() + 
+  draw_label(
+    "Mortality Over Time",
+    fontface = 'bold',
+    x = 0,
+    hjust = 0
+  ) +
+  theme(
+    # add margin on the left of the drawing canvas,
+    # so title is aligned with left edge of first plot
+    plot.margin = margin(0, 0, 0, 7)
+  )
+plot_grid(
+  title, untitled_grid,
+  ncol = 1,
+  # rel_heights values control vertical title margins
+  rel_heights = c(0.1, 1)
+)
+#ggsave("SuppFig7.jpg", width = 2200, height = 1080, units = "px")
+
+sestiere_vec <- c()
+for(i in unique(sestiere_df_modified$Sestiere)){
+  sestiere_vec <- c(sestiere_vec, length(sestiere_df_modified$Parish[sestiere_df_modified$Sestiere==i]))
+}
+print(sum(sestiere_vec) / length(sestiere_vec))
+print(sd(sestiere_vec))
+
+final_mortality <- as.numeric(colSums(filled_modified[1:1095,-1]) / (population_specified_modified$Population * 1000))
+mean_mortality <- c()
+for(i in unique(sestiere_df_modified$Sestiere)){
+  sestiere_mortality <- final_mortality[which(population_specified_modified$Parish %in% sestiere_df_modified$Parish[sestiere_df_modified$Sestiere == i])]
+  mean_mortality <- c(mean_mortality, sum(sestiere_mortality) / length(sestiere_mortality))
+  print(sd(sestiere_mortality))
+}
+print(sum(mean_mortality) / length(mean_mortality))
+print(sd(mean_mortality))
+```
