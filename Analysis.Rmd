@@ -11,7 +11,9 @@ output:
 
 This notebook cleans the mortality data from the 1630-1631 Venetian Plague, calculates the Shannon entropy and negentropy of the quantile function and the PDF, and uses bootstrapping to find 95% confidence intervals.
 
-## Initialization
+# Initialization
+
+Initialize renv and load packages.
 
 ```{r setup, include=TRUE, warning=FALSE,message=FALSE}
 renv::init()
@@ -43,9 +45,9 @@ rm(list = ls())
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-First, we import all of the csv files.
+Import all of the [csv files](https://github.com/ggrrll/Venice-plague-epidemic-paper) containing mortality data sourced from *Lazzari, G., Colavizza, G., Bortoluzzi, F., Drago, D., Erboso, A., Zugno, F., ... & Salathé, M. (2020). A digital reconstruction of the 1630–1631 large plague outbreak in Venice. Scientific reports, 10(1), 1-7*.
 
-```{r import}
+```{r import mortality csvs}
 # Mortality data for all parishes from January 1, 1629 to December 31, 1631.
 all <- read.csv("ALL_utf.csv")
 city_peaks <- read.csv("city_cases_baseline_removed.csv")
@@ -65,16 +67,23 @@ sestiere_pre <- read.csv("sestiereDataPre.csv")
 sestiere_post <- read.csv("SestiereDataPost.csv")
 ```
 
-## Data Cleaning
+Import csv files containing population data from Venetian censuses in 1509, 1551, 1581, 1586, and 1696 for each parish.
 
-Then, we perform preliminary cleaning.
+```{r import_population_csvs}
+population_pre <- read.csv("ParishPopulationsPre.csv")
+population_post <- read.csv("ParishPopulationsPost.csv")
+```
+
+# Data Cleaning
+
+Now, we perform preliminary cleaning.
 
 ```{r first_pass_cleaning}
 # Fix the Dates on all
 all$Date <- sub("2029", "1629", all$Date)
 all$Date <- sub("2030", "1630", all$Date)
 all$Date <- sub("2031", "1631", all$Date)
-all$Date <- as.Date(all$Date, format="%m/%d/%Y")
+all$Date <- as.Date(all$Date, format = "%m/%d/%Y")
 
 # Fix artifacts for column names
 colnames(all) <- sub("S.", "S", colnames(all))
@@ -91,7 +100,7 @@ for(column in 1:ncol(all)){
 
 # Fix the Dates on filled
 colnames(filled)[1] <- "Date"
-filled$Date <- as.Date(filled$Date, format="%Y-%m-%d")
+filled$Date <- as.Date(filled$Date, format = "%Y-%m-%d")
 
 # Fix the parish name artifacts in filled (import_csv replaces spaces with periods)
 colnames(filled) <- sub("S.", "S", colnames(filled))
@@ -101,15 +110,15 @@ for(column in 1:ncol(filled)){
   if(column == 1){
     next
   }
-  if(!(is.integer(filled[,column]))){
-    filled[,column] = as.integer(filled[,column])
+  if(!(is.integer(filled[, column]))){
+    filled[, column] = as.integer(filled[,column])
   }
 }
 
 # Fix the Dates on city_peaks
 colnames(city_peaks)[1] <- "Date"
 city_peaks$Date <- sub(" 00:00:00", "", city_peaks$Date)
-city_peaks$Date <- as.Date(city_peaks$Date, format="%Y-%m-%d")
+city_peaks$Date <- as.Date(city_peaks$Date, format = "%Y-%m-%d")
 
 # Fix geo_df
 colnames(geo_df)[1] <- "Parish"
@@ -137,33 +146,19 @@ for(col in 1:ncol(filled)){
   }
 }
 if(length(all_nas) > 0){
-  filled <- filled[,-all_nas]
+  filled <- filled[, -all_nas]
 }
 
 # Remove parishes in filled that aren't in the population dataset
 missing_parishes <- c()
 for(p in 1:length(colnames(filled))){
   if(!(colnames(filled)[p] %in% population$Parish) & colnames(filled)[p] != "Date"){
-    missing_parishes <- c(missing_parishes,p)
+    missing_parishes <- c(missing_parishes, p)
   }
 }
 if(length(missing_parishes) > 0){
   filled <- filled[,-missing_parishes]
 }
-```
-
-The code below removes San Marco from our analysis. In our main analysis, we exclude it, but in the supplementary information, we include San Marco as a form of sensitivity analysis.
-
-```{r remove_Marco}
-# Get rid of S. Marco, the outlier
-# filled <- filled[,-match("S.Marco",colnames(filled))]
-```
-
-Import csv files containing population data from Venetian censuses in 1509, 1551, 1581, 1586, and 1696 for each parish.
-
-```{r import_population_csvs}
-population_pre <- read.csv("ParishPopulationsPre.csv")
-population_post <- read.csv("ParishPopulationsPost.csv")
 ```
 
 Clean the population datasets.
@@ -345,7 +340,7 @@ filled_1630 <- filled[year(filled$Date) == 1630,]
 filled_1631 <- filled[year(filled$Date) == 1631,]
 ```
 
-Finally, we figure out which parishes we will keep. The following lines exclude the parishes which had no data whatsoever in the entire primary outbreak window (9/1/30-12/31/30).
+Finally, we figure out which parishes we will keep. The code below removes San Marco from our analysis because it served as a placeholder for deaths from drowning and those in prison, which resulted in an early spike in cases not representative of parish transmission. In our main analysis, we exclude it, but in the supplementary information, we include San Marco as a form of sensitivity analysis. The other two parishes we exclude are those which had no data during the primary outbreak window (9/1/30-12/31/30). 
 
 ```{r outlier_handling}
 outliers <- c("S.Polo", "S.Stae", "S.Marco") #No cases between 9/1/30 and 12/31/30, outbreak time
@@ -354,13 +349,11 @@ sestiere_df_modified <- sestiere_df[!(sestiere_df$Parish %in% outliers),]
 population_specified_modified <- population_specified[!(population_specified$Parish %in% outliers),]
 ```
 
-## Bootstrapping
+# Define Statistic-Calculating Functions
 
-In this section of code, we run bootstrapping (*n* = 999) to identify 95% confidence intervals for all of the statistics we calculate.
+In this section, we define the functions that calculate the statistics of interest (entropy and KL divergence of the quantile function and PDF).
 
-### Define Statistic-Calculating Functions
-
-First, we define the functions we will bootstrap with.
+## Define PDF Approximation Function
 
 For our histogram approximation of the PDF, we use Sturges's Rule to choose $K$, the number of bins, for $N$ observations ($K = \log_2(N)+1$).
 
@@ -373,6 +366,8 @@ PDF_approx <- function(x, K = ceiling(log2(length(x))) + 1) {
   return(p)
 }
 ```
+
+## Define Kullback-Leibler Divergence
 
 To calculate Kullback-Leibler divergence between two discrete probability distributions P(x) and Q(x), we use the definition $\sum_{x \in \mathcal{X}} P(x) \log \frac{P(x)}{Q(x)}$. While this formulation implies that KL divergence is undefined when $P(x) = Q(x) = 0$, we [consider the contribution of the KL divergence at that point to be zero](https://en.wikipedia.org/wiki/Kullback%E2%80%93Leibler_divergence#Definition).
 
@@ -403,7 +398,9 @@ KL_new <- function(x, y, epsilon = 1e-05){
 
 For a discrete probability distribution $P(x)$ taking values in the set $\mathcal{X}$, we define the Shannon entropy $H$ to be $H = -\sum_{x \in \mathcal{X}} P(x) \ln P(x)$.
 
-Now, we define our master analysis function which returns the total number of deaths, Shannon entropy of the PDF, Shannon Entropy of the quantile function, negentropy of the PDF (KL divergence with a Gaussian), KL divergence of the PDF from a uniform, and KL divergence of the quantile from a discrete uniform at a given timestep. Later, we will run this function on the 999 resampled datasets generated during the bootstrapping process.
+## Define Main Analaysis Function
+
+Now, we define our main analysis function which returns the total number of deaths, Shannon entropy of the PDF, Shannon Entropy of the quantile function, negentropy of the PDF (KL divergence with a Gaussian), KL divergence of the PDF from a uniform, and KL divergence of the quantile from a discrete uniform at a given timestep. Later, we will run this function on the 999 resampled datasets generated during the bootstrapping process.
 
 ```{r define_entropy_procedure}
 #---- 
@@ -479,7 +476,11 @@ entropy_procedure <- function(original_data,
   }
 ```
 
-### Define Bootstrapping Functions
+# Bootstrapping
+
+In this section of code, we run bootstrapping (*n* = 999) to identify 95% confidence intervals for all of the statistics we calculate.
+
+## Define Bootstrapping Functions
 
 Now, we implement a generalized function to bootstrap over our entropy_procedure function. We will utilize this function in the subsequent functions bootstrapping over a particular dataset.
 
@@ -545,7 +546,7 @@ manual_boot_modified <-
   }
 ```
 
-### Identify 95% CI
+## Identify 95% CI
 
 Instead of finding the 97.5th and 2.5th percentile full runs, we find the 97.5th and 2.5th percentile values at each time point.
 
@@ -570,7 +571,7 @@ find_closest_run <- function(all_runs, target_percentile) {
 }
 ```
 
-### Per-sestiere analysis
+## Per-sestiere analysis
 
 Now, we define the analysis and bootstrapping functions for the per-sestiere analysis.
 
@@ -703,7 +704,7 @@ shannonBySestiere_Bootstrapped <- function(cumulative = TRUE) {
 }
 ```
 
-### Whole Dataset Analysis
+## Whole Dataset Analysis
 
 Finally, we define the functions for the bootstrapping of the whole dataset.
 
@@ -783,7 +784,7 @@ whole_dataset_bootstrap <- function(cumulative = TRUE){
 }
 ```
 
-### Run Bootstrap
+## Run Bootstrap
 
 Finally, we run our bootstrap!
 
@@ -809,13 +810,9 @@ stats_of_whole_boot_instantaneous_50_2 <- whole_dataset_bootstrap(cumulative = F
 
 # Results
 
-Now, we record our results.
+Now, we record our results. In this section, we focus on printing specific values of interest.
 
-## Printed Results
-
-In this section, we focus on printing specific values of interest.
-
-### Print Values on First and Last Day with 95% CIs
+## Print Values on First and Last Day with 95% CIs
 
 First, we print the true value, 2.5th percentile value, and 97.5th percentile value on the first and last days of the epidemic for each of our statistics calculated on the cumulative mortality data.
 
@@ -1027,7 +1024,7 @@ stats_of_whole_boot_instantaneous_50_2$b1[[2]][max_index]
 stats_of_whole_boot_instantaneous_50_2$b2[[2]][max_index]
 ```
 
-### Descriptive Statistics
+## Descriptive Statistics
 
 Next, we print descriptive statistics for our dataset, such as the median and mean parish population.
 
@@ -1057,7 +1054,7 @@ mean(colSums(filled_modified[,-1])/(population_specified_modified$Population*100
 sd(colSums(filled_modified[,-1])/(population_specified_modified$Population*1000))
 ```
 
-### Effective Number of Parishes
+## Effective Number of Parishes
 
 Next, we validate our results against the effective number of parties $\left(\frac{1}{\sum_{i}^{n}p_i^2}\right)$, which has a more direct interpretation.
 
@@ -1092,11 +1089,11 @@ for(i in 1:length(filled$Date)){
 # lines(stats_of_whole_instantaneous_50_2$shannonQuantile,col="black")
 ```
 
-## Plot Results
+# Figures
 
 Finally, we plot our results!
 
-### Figure 2
+## Figure 2
 
 First, we create Figure 2, a grid plot consisting of:
 
@@ -1224,7 +1221,7 @@ plot_grid(title,
 # ggsave("~/VenetianPlague_Entropy/SMarcoCumulativeQuantile.jpg",width=2100,height=1200,units="px")
 ```
 
-### Figure 3
+## Figure 3
 
 Second, we create Figure 3, a grid plot consisting of:
 
@@ -1360,7 +1357,7 @@ plot_grid(title,
 # ggsave("~/VenetianPlague_Entropy/SMarcoCumulativePDF.jpg",width=2100,height=1200,units="px")
 ```
 
-### Supplementary Figure S2
+## Supplementary Figure S2
 
 Third, we create Supplementary Figure S2, a grid plot containing:
 
@@ -1474,7 +1471,7 @@ plot_grid(title,
 # ggsave("InstantaneousQuantileGrid_Final_4.jpg",width=2100,height=1200,units="px") #Supp Fig S2
 ```
 
-### Supplementary Figure S3
+## Supplementary Figure S3
 
 Fourth, we create Supplementary Figure S3, a grid plot containing:
 
@@ -1604,7 +1601,7 @@ plot_grid(title,
 # ggsave("InstantaneousPDFGrid_Final_4.jpg",width=2100,height=1200,units="px") # Supp Fig S3
 ```
 
-### Figure 4
+## Figure 4
 
 Fifth, we create Figure 4, a plot of Shannon entropy of the quantile functions for each sestiere's cumulative mortality data along with the 95% confidence intervals generated from bootstrapping.
 
@@ -1719,11 +1716,11 @@ ggplot(plot_df, aes(
 # ggsave("~/VenetianPlague_Entropy/Figures_Final/Figure4.jpg",width=2100,height=1500,units="px")
 ```
 
-### Figure 1
+## Figure 1
 
 The goal with Figure 1 is to illustrate how the distribution of disease evolves over the course of the epidemic. Given cumulative mortality data, we represent the distribution of disease in 3 ways: a choropleth map, a quantile function, and a PDF. We then isolate 3 time points corresponding to the start, peak, and end of the epidemic. Finally, we graph these representations at every time point, producing a 3x3 grid.
 
-#### Choropleth Maps
+### Choropleth Maps
 
 The goal of this section is to generate both the choropleth maps as described above for Figure 1 as well as a GIF that cycles through the choropleth map at the end of every month (Supplementary Video S1).
 
@@ -1755,7 +1752,7 @@ library(dplyr)
 library(lubridate)
 ```
 
-##### Load shap file for map skeleton
+#### Load shap file for map skeleton
 
 ```{r choropleth load shap file, eval = FALSE}
 shap = readOGR("~/VenetianPlague_Entropy/1729_PAR_CONF.shp")
@@ -1764,9 +1761,9 @@ shap = readOGR("~/VenetianPlague_Entropy/1729_PAR_CONF.shp")
 shap@data <- shap@data['NAME']
 ```
 
-##### Original deaths on map
+#### Original deaths on map
 
-###### Load clean dataset
+##### Load clean dataset
 
 ```{r choropleth load clean dataset, eval = FALSE}
 original_deaths <- read.csv('~/VenetianPlague_Entropy/ALL_utf.csv')
@@ -1780,7 +1777,7 @@ my_shift <- as.POSIXct('1629-01-01')
 original_deaths$Date <- original_deaths$Date - difftime(original_deaths$Date[1],my_shift )
 ```
 
-###### aggregate over months
+##### aggregate over months
 
 (and set back NAs)
 
@@ -1820,7 +1817,7 @@ agg_df$NAME = parish_names
 remove(melted_df,agg_melt_df,parish_names,jan_melted_df,jan_agg_melt_df)
 ```
 
-###### sum over whole time window
+##### sum over whole time window
 
 (don't run this section if you are not interested)
 
@@ -1839,7 +1836,7 @@ original_summed[original_summed==0] = NA
 sum(is.na(original_summed))
 ```
 
-###### merge deaths data into shape object
+##### merge deaths data into shape object
 
 fix col names to match names in shapes:
 
@@ -1925,7 +1922,7 @@ colnames(shap@data) <- c(c('NAME','id',"Total_deaths"),months_names)
 View(shap@data)
 ```
 
-###### Plot cases on map
+##### Plot cases on map
 
 (doc for space analysis/plot in R: <https://cran.r-project.org/doc/contrib/intro-spatial-rl.pdf> )
 
@@ -2167,7 +2164,7 @@ qtm(shap,'Total_deaths')
 dev.off()
 ```
 
-#### PDF and Quantile Graphs
+### PDF and Quantile Graphs
 
 In this section, we will generate the PDF and Quantile Graphs included in Figure 1. For the quantile function and PDF graphs, we overlay the corresponding maximum entropy distribution in red.
 
@@ -2538,7 +2535,7 @@ plot_grid(plotlist = master_plot_list, ncol = 3, nrow = 3, align = 'hv', axis = 
 # lines(old_negent)
 ```
 
-#### Supplementary Figure S7 (Mortality Graphs)
+## Supplementary Figure S7 (Mortality Graphs)
 
 In this section, we generate the mortality graphs seen in Supplementary Figure S7.
 
@@ -2619,4 +2616,76 @@ for(i in unique(sestiere_df_modified$Sestiere)){
 }
 print(sum(mean_mortality) / length(mean_mortality))
 print(sd(mean_mortality))
+```
+
+## Find Maximum Entropy of PDF
+
+```{r find PDF max entropy}
+normal_approx <- function (x, K = ceiling(log2(length(x))) + 1){
+  bins <- seq(min(x), max(x), length.out = K + 1)
+  bins2 <- rep(0, K)
+  for(i in 1:K){
+    bins2[i] <- (bins[i] + bins[i + 1]) / 2
+  }
+  y <- dnorm(bins2, mean = mean(x), sd = sd(x))
+  y <- y / sum(y)
+  return(y)
+  #return(log(2 * pi * exp(1)*sigma2)*1/2 + sum(p * log(p)))
+}
+
+max_entropy_vec <- rep(0, 1095)
+shannon_PDF_vec <- rep(0, 1095)
+case_df <- as.data.frame(matrix(data = NA, nrow = 1095, ncol = 50))
+for(i in 1:1095){
+  case_vector_2 <- colSums(filled_modified[1:i,-1])/(population_specified_modified$Population * 1000)
+  case_df[i,] <- case_vector_2
+  p <- normal_approx(case_vector_2)
+  max_entropy <- -1 * sum(p*log(p))
+  #kern <- as.numeric(PDF_approx(case_vector_2))
+  kern <- as.numeric(hist(case_vector_2, breaks = seq(min(case_vector_2), max(case_vector_2), length.out = 8), plot = FALSE)$density)
+  kern <- kern/sum(kern)
+  kern_norm <- kern / sum(kern)
+  shannon_PDF <- -1 * sum(kern[kern != 0] * log(kern[kern != 0]))
+  if(i > 1){
+    if(abs(shannon_PDF - shannon_PDF_vec[i-1]) >= 0.4){
+      hist(case_vector_2, breaks = 7)
+      hist(case_df[i-1,], breaks = 7, col = "red")
+    }
+  }
+  max_entropy_vec[i] <- max_entropy
+  shannon_PDF_vec[i] <- shannon_PDF
+}
+plot.ts(shannon_PDF_vec, col = "black")
+lines(max_entropy_vec, col = "red")
+```
+
+```{r find PDF max entropy using freedman diaconis}
+freedman_diaconis <- function (x){
+  bin_width = 2 * IQR(x) * (length(x))^(-1/3)
+  num_bins = ceiling((max(x) - min(x))/bin_width)
+  return(num_bins)
+}
+
+max_entropy_vec <- rep(0, 1095)
+shannon_PDF_vec <- rep(0, 1095)
+for(i in 2:1095){
+  case_vector_2 <- colSums(filled_modified[1:i,-1])/(population_specified_modified$Population * 1000)
+  num_bins <- as.numeric(freedman_diaconis(case_vector_2))
+  p <- normal_approx(case_vector_2, K = num_bins)
+  max_entropy <- -1 * sum(p*log(p))
+  kern <- as.numeric(hist(case_vector_2, breaks = seq(min(case_vector_2), max(case_vector_2), length.out = num_bins + 1), plot = FALSE)$density)
+  kern <- kern/sum(kern)
+  #if(i %% 100 == 0){
+   # hist(case_vector_2, breaks = num_bins)
+  #  print(hist(case_vector_2, breaks = num_bins, plot = FALSE)$density)
+  #}
+  #kern <- as.numeric(PDF_approx(case_vector_2, K = num_bins))
+  kern_norm <- kern / sum(kern)
+  shannon_PDF <- -1 * sum(kern[kern != 0] * log(kern[kern != 0]))
+  
+  max_entropy_vec[i] <- max_entropy
+  shannon_PDF_vec[i] <- shannon_PDF
+}
+plot.ts(max_entropy_vec, col = "red")
+lines(shannon_PDF_vec, col = "black")
 ```
