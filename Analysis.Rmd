@@ -2620,7 +2620,12 @@ print(sd(mean_mortality))
 
 ## Find Maximum Entropy of PDF
 
-```{r find PDF max entropy}
+In this section, we compare the entropy of the PDF with that of the histogram-approximated normal distribution with identical mean and variance to the data. In particular, we make this comparison for three bin selection methods.
+
+### Sturges' Rule
+Here, we implement Sturges' Rule to determine the number of bins ($K = \lceil \log_2(n)\rceil + 1$). Since we have a consistent number of parishes ($n = 50$), Sturges' Rule will always result in a 7 bin histogram. 
+
+```{r find PDF max entropy sturges rule}
 normal_approx <- function (x, K = ceiling(log2(length(x))) + 1){
   bins <- seq(min(x), max(x), length.out = K + 1)
   bins2 <- rep(0, K)
@@ -2629,45 +2634,114 @@ normal_approx <- function (x, K = ceiling(log2(length(x))) + 1){
   }
   y <- dnorm(bins2, mean = mean(x), sd = sd(x))
   y <- y / sum(y)
+  plot(x = bins2, y = y)
+  y_2 <- diff(pnorm(bins, mean(x), sd(x)))
+  plot(bins2, y_2)
+  print(y_2 - y)
+  print(mean(x) - sum(bins2 * y))
+  print(mean(x) - sum(bins2 * y_2))
+  print(sum(y_2))
   return(y)
   #return(log(2 * pi * exp(1)*sigma2)*1/2 + sum(p * log(p)))
 }
 
-max_entropy_vec <- rep(0, 1095)
-shannon_PDF_vec <- rep(0, 1095)
-case_df <- as.data.frame(matrix(data = NA, nrow = 1095, ncol = 50))
-for(i in 1:1095){
+for(i in 1:10){
   case_vector_2 <- colSums(filled_modified[1:i,-1])/(population_specified_modified$Population * 1000)
-  case_df[i,] <- case_vector_2
   p <- normal_approx(case_vector_2)
-  max_entropy <- -1 * sum(p*log(p))
-  #kern <- as.numeric(PDF_approx(case_vector_2))
-  kern <- as.numeric(hist(case_vector_2, breaks = seq(min(case_vector_2), max(case_vector_2), length.out = 8), plot = FALSE)$density)
-  kern <- kern/sum(kern)
-  kern_norm <- kern / sum(kern)
-  shannon_PDF <- -1 * sum(kern[kern != 0] * log(kern[kern != 0]))
-  if(i > 1){
-    if(abs(shannon_PDF - shannon_PDF_vec[i-1]) >= 0.4){
-      hist(case_vector_2, breaks = 7)
-      hist(case_df[i-1,], breaks = 7, col = "red")
-    }
-  }
-  max_entropy_vec[i] <- max_entropy
-  shannon_PDF_vec[i] <- shannon_PDF
 }
-plot.ts(shannon_PDF_vec, col = "black")
-lines(max_entropy_vec, col = "red")
+
+#max_entropy_vec <- rep(0, 1095)
+#shannon_PDF_vec <- rep(0, 1095)
+#case_df <- as.data.frame(matrix(data = NA, nrow = 1095, ncol = 50))
+#for(i in 1:1095){
+#  case_vector_2 <- colSums(filled_modified[1:i,-1])/(population_specified_modified$Population * 1000)
+#  case_df[i,] <- case_vector_2
+#  p <- normal_approx(case_vector_2)
+#  max_entropy <- -1 * sum(p*log(p))
+#  #kern <- as.numeric(PDF_approx(case_vector_2))
+#  kern <- as.numeric(hist(case_vector_2, breaks = seq(min(case_vector_2), max(case_vector_2), length.out = 8), plot = FALSE)$density)
+#  kern <- kern/sum(kern)
+#  kern_norm <- kern / sum(kern)
+#  shannon_PDF <- -1 * sum(kern[kern != 0] * log(kern[kern != 0]))
+#  max_entropy_vec[i] <- max_entropy
+#  shannon_PDF_vec[i] <- shannon_PDF
+#}
+```
+Now, we plot
+1. the entropy of the resulting PDF (black) against that of the normal distribution with the same mean and variance (red) for every day in the epidemic
+2. the negentropy of the PDF, calculated as entropy of the normal distribution - entropy of the PDF
+
+```{r plot PDF vs normal Sturges rule, eval = FALSE}
+plot_df <- as.data.frame(cbind(shannon_PDF_vec, max_entropy_vec, filled$Date))
+plot1 <- ggplot(data = plot_df, aes(x = filled$Date, y = shannon_PDF_vec)) +
+  geom_line() +
+  geom_line(aes(x = filled$Date, y = max_entropy_vec), col = "red") +
+  scale_x_date(date_breaks = "12 months", date_labels = "%m-%Y") +
+  theme_bw() +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.background = element_blank(),
+    plot.background = element_rect(fill = "white"),
+    axis.title = element_text(size = 10),
+    plot.title = element_text(size = 12)
+  ) +
+  labs(y = "Entropy (nats)", x = "Date", title = "Entropy")
+
+plot2 <- ggplot(data = plot_df, aes(x = filled$Date, y = max_entropy_vec - shannon_PDF_vec)) +
+  geom_line() +
+  geom_hline(yintercept = 0, color = "red") +
+  scale_x_date(date_breaks = "12 months", date_labels = "%m-%Y") +
+  theme_bw() +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.background = element_blank(),
+    plot.background = element_rect(fill = "white"),
+    axis.title = element_text(size = 10),
+    plot.title = element_text(size = 12)
+  ) +
+  labs(y = "Negentropy (nats)", x = "Date", title = "Negentropy")
+
+plot_ls <- list(plot1, plot2)
+
+# Create the grid 
+untitled_grid <-
+  plot_grid(plotlist = plot_ls,
+            labels = c("a", "b"),
+            label_size = 12)
+
+# Add the title
+title <- ggdraw() +
+  draw_label(
+    "PDF of Cumulative Mortality Using Sturges' Rule",
+    fontface = 'bold',
+    x = 0,
+    hjust = 0
+  ) +
+  theme(# add margin on the left of the drawing canvas,
+    # so title is aligned with left edge of first plot
+    plot.margin = margin(0, 0, 0, 7))
+
+plot_grid(title,
+          untitled_grid,
+          ncol = 1,
+          # rel_heights values control vertical title margins
+          rel_heights = c(0.1, 1))
 ```
 
-```{r find PDF max entropy using freedman diaconis}
+### Freedman-Diaconis
+Here, we implement the Freedman-Diaconis rule to determine our bin width. The Freedman-Diaconis rule states that $\text{Bin width} = 2 \cdot \frac{\text{IQR}(x)}{\sqrt[3]{x}}$. 
+```{r find PDF max entropy using freedman diaconis, eval = FALSE}
 freedman_diaconis <- function (x){
   bin_width = 2 * IQR(x) * (length(x))^(-1/3)
   num_bins = ceiling((max(x) - min(x))/bin_width)
   return(num_bins)
 }
 
-max_entropy_vec <- rep(0, 1095)
-shannon_PDF_vec <- rep(0, 1095)
+max_entropy_vec <- rep(NA_real_, 1095)
+shannon_PDF_vec <- rep(NA_real_, 1095)
+# Exclude the first day since the high prevalence of zeroes results in 
 for(i in 2:1095){
   case_vector_2 <- colSums(filled_modified[1:i,-1])/(population_specified_modified$Population * 1000)
   num_bins <- as.numeric(freedman_diaconis(case_vector_2))
@@ -2686,6 +2760,167 @@ for(i in 2:1095){
   max_entropy_vec[i] <- max_entropy
   shannon_PDF_vec[i] <- shannon_PDF
 }
-plot.ts(max_entropy_vec, col = "red")
-lines(shannon_PDF_vec, col = "black")
+
 ```
+Now, we plot the entropy of the resulting PDF (black) against that of the normal distribution with the same mean and variance (red) for every day in the epidemic.
+```{r plot PDF vs normal Freedman-Diaconis, eval = FALSE}
+plot_df<- as.data.frame(cbind(shannon_PDF_vec, max_entropy_vec, filled$Date))
+plot1 <- ggplot(data = plot_df, aes(x = filled$Date, y = shannon_PDF_vec)) +
+  geom_line() +
+  geom_line(aes(x = filled$Date, y = max_entropy_vec), col = "red") +
+  scale_x_date(date_breaks = "12 months", date_labels = "%m-%Y") +
+  theme_bw() +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.background = element_blank(),
+    plot.background = element_rect(fill = "white"),
+    axis.title = element_text(size = 10),
+    plot.title = element_text(size = 12)
+  ) +
+  labs(y = "Entropy (nats)", x = "Date", title = "Entropy")
+
+plot2 <- ggplot(data = plot_df, aes(x = filled$Date, y = max_entropy_vec - shannon_PDF_vec)) +
+  geom_line() +
+  geom_hline(yintercept = 0, color = "red") +
+  scale_x_date(date_breaks = "12 months", date_labels = "%m-%Y") +
+  theme_bw() +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.background = element_blank(),
+    plot.background = element_rect(fill = "white"),
+    axis.title = element_text(size = 10),
+    plot.title = element_text(size = 12)
+  ) +
+  labs(y = "Negentropy (nats)", x = "Date", title = "Negentropy")
+
+plot_ls <- list(plot1, plot2)
+
+# Create the grid 
+untitled_grid <-
+  plot_grid(plotlist = plot_ls,
+            labels = c("a", "b"),
+            label_size = 12)
+
+# Add the title
+title <- ggdraw() +
+  draw_label(
+    "PDF of Cumulative Mortality Using Freedman-Diaconis Rule",
+    fontface = 'bold',
+    x = 0,
+    hjust = 0
+  ) +
+  theme(# add margin on the left of the drawing canvas,
+    # so title is aligned with left edge of first plot
+    plot.margin = margin(0, 0, 0, 7))
+
+plot_grid(title,
+          untitled_grid,
+          ncol = 1,
+          # rel_heights values control vertical title margins
+          rel_heights = c(0.1, 1))
+```
+
+### Kernel-Density Estimation
+Finally, here we use Kernel-Density estimation with 512 bins. Note that because the total number of bins is substantially greater than the previous two methods, the magnitude of entropy will also be larger. 
+```{r kde entropy, eval = FALSE}
+kde_entropy <- function(x, n_points = 512) {
+  x <- x[is.finite(x)]
+
+  if (length(x) < 2L || length(unique(x)) < 2L) {
+    return(c(entropy = NA_real_,
+             maximum_entropy = NA_real_,
+             negentropy = NA_real_))
+  }
+
+  d <- density(x, n = n_points)
+  dx <- d$x[2L] - d$x[1L]
+
+  f <- d$y / sum(d$y * dx)
+  positive <- f > 0
+
+  h <- -sum(f[positive] * log(f[positive])) * dx
+
+  mu <- sum(d$x * f) * dx
+  variance <- sum((d$x - mu)^2 * f) * dx
+  h_normal <- 0.5 * log(2 * pi * exp(1) * variance)
+
+  c(
+    entropy = h,
+    maximum_entropy = h_normal,
+    negentropy = h_normal - h
+  )
+}
+
+max_entropy_vec <- rep(0, 1095)
+shannon_PDF_vec <- rep(0, 1095)
+
+for (i in 1:1095) {
+  case_vector_2 <- colSums(filled_modified[1:i, -1]) / (population_specified_modified$Population * 1000)
+  kde_output_vec <- kde_entropy(case_vector_2)
+  shannon_PDF_vec[i] <- kde_output_vec[1]
+  max_entropy_vec[i] <- kde_output_vec[2]
+}
+```
+Now, we plot the entropy of the resulting PDF (black) against that of the normal distribution with the same mean and variance (red) for every day in the epidemic.
+```{r kde entropy plot, eval = FALSE}
+plot_df <- as.data.frame(cbind(shannon_PDF_vec, max_entropy_vec, filled$Date))
+plot1 <- ggplot(data = plot_df, aes(x = filled$Date, y = shannon_PDF_vec)) +
+  geom_line() +
+  geom_line(aes(x = filled$Date, y = max_entropy_vec), col = "red") +
+  scale_x_date(date_breaks = "12 months", date_labels = "%m-%Y") +
+  theme_bw() +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.background = element_blank(),
+    plot.background = element_rect(fill = "white"),
+    axis.title = element_text(size = 10),
+    plot.title = element_text(size = 12)
+  ) +
+  labs(y = "Entropy (nats)", x = "Date", title = "Entropy")
+
+plot2 <- ggplot(data = plot_df, aes(x = filled$Date, y = max_entropy_vec - shannon_PDF_vec)) +
+  geom_line() +
+  geom_line(aes(x = filled$Date, y = rep(0,1095)), col = "red") +
+  scale_x_date(date_breaks = "12 months", date_labels = "%m-%Y") +
+  theme_bw() +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.background = element_blank(),
+    plot.background = element_rect(fill = "white"),
+    axis.title = element_text(size = 10),
+    plot.title = element_text(size = 12)
+  ) +
+  labs(y = "Negentropy (nats)", x = "Date", title = "Negentropy")
+
+plot_ls <- list(plot1, plot2)
+
+# Create the grid 
+untitled_grid <-
+  plot_grid(plotlist = plot_ls,
+            labels = c("a", "b"),
+            label_size = 12)
+
+# Add the title
+title <- ggdraw() +
+  draw_label(
+    "PDF of Cumulative Mortality Using KDE",
+    fontface = 'bold',
+    x = 0,
+    hjust = 0
+  ) +
+  theme(# add margin on the left of the drawing canvas,
+    # so title is aligned with left edge of first plot
+    plot.margin = margin(0, 0, 0, 7))
+
+plot_grid(title,
+          untitled_grid,
+          ncol = 1,
+          # rel_heights values control vertical title margins
+          rel_heights = c(0.1, 1))
+```
+### Conclusions
+Note that regardless of the binning method used, negentropy starts low, increases until the primary outbreak, then drops and stays low for the rest of the epidemic.
