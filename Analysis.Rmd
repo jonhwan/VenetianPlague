@@ -86,7 +86,7 @@ all$Date <- sub("2031", "1631", all$Date)
 all$Date <- as.Date(all$Date, format = "%m/%d/%Y")
 
 # Fix artifacts for column names
-colnames(all) <- sub("S.", "S", colnames(all))
+colnames(all) <- sub("^S\\.", "S", colnames(all))
 
 # Convert mortality data in all into integer types
 for(column in 1:ncol(all)){
@@ -103,7 +103,7 @@ colnames(filled)[1] <- "Date"
 filled$Date <- as.Date(filled$Date, format = "%Y-%m-%d")
 
 # Fix the parish name artifacts in filled (import_csv replaces spaces with periods)
-colnames(filled) <- sub("S.", "S", colnames(filled))
+colnames(filled) <- sub("^S\\.", "S", colnames(filled))
 
 # Convert mortality data in filled into integer types
 for(column in 1:ncol(filled)){
@@ -123,14 +123,14 @@ city_peaks$Date <- as.Date(city_peaks$Date, format = "%Y-%m-%d")
 # Fix geo_df
 colnames(geo_df)[1] <- "Parish"
 geo_df$Parish <- gsub("[[:space:]]", ".", geo_df$Parish)
-geo_df$Parish <- sub("S.", "S", geo_df$Parish)
+geo_df$Parish <- sub("^S\\.", "S", geo_df$Parish)
 
 # Get rid of Angelo.Rafael because it has no lat/long data
 # geo_df <- geo_df[!grepl("Angelo.Rafael",geo_df$Parish),]
 
 # Fix population
 population$Parish <- gsub("[[:space:]]", ".", population$Parish)
-population$Parish <- sub("S.", "S", population$Parish)
+population$Parish <- sub("^S\\.", "S", population$Parish)
 
 # What are the missing cities in geo_df?
 setdiff(geo_df$Parish, colnames(filled))
@@ -169,10 +169,10 @@ colnames(population_pre) <- c("Parish", "Population_1509", "Population_1551",
 
 # Remove artifacts
 population_pre$Parish <- gsub("[[:space:]]", ".", population_pre$Parish)
-population_pre$Parish <- sub("S.", "S", population_pre$Parish)
+population_pre$Parish <- sub("^S\\.", "S", population_pre$Parish)
 
 population_post$Parish <- gsub("[[:space:]]", ".", population_post$Parish)
-population_post$Parish <- sub("S.", "S", population_post$Parish)
+population_post$Parish <- sub("^S\\.", "S", population_post$Parish)
 
 # Identify and remove the parishes that are not contained in both the 
 # 1586 census and the 1696 census
@@ -244,7 +244,7 @@ t_pop_df <- t_pop_df[-1,]
 colnames(t_pop_df) <- population_df$Parish
 t_pop_df <- cbind(year_vec, t_pop_df)
 t_pop_df_plot <- t_pop_df %>% 
-  gather(key="Parish_var", value = "value", -year_vec)
+  gather(key = "Parish_var", value = "value", -year_vec)
 t_pop_df_plot$value <- as.numeric(t_pop_df_plot$value)
 
 t_pop_df_plot %>%
@@ -291,15 +291,19 @@ slope <- as.numeric(coef(mod)[2]) #slope, close to 1 so we feel comfortable inte
 Due to the high $r$ value (0.95) and the slope being close to 1, we feel comfortable linearly interpolating between the 1696 and 1586 population data to estimate each parish's population on January 1, 1629.
 
 ```{r interpolation}
+# Per-parish interpolation
+interpolated_1629 <- as.numeric(population_df$Population_1586) + (43 / 110) * (population_df$Population_1696 - population_df$Population_1586)
+
+# Population-wide interpolation using linear regression results
 # 1629 - 1586 = 43, 1696 - 1586 = 110, so to interpolate we multiply by 43/110
-interpolated_1629 <- (intercept - (1-slope) * population_pre$Population_1586) * 
-  43/110 + population_pre$Population_1586
+#interpolated_1629 <- (intercept - (1-slope) * population_pre$Population_1586) * 
+#  43/110 + population_pre$Population_1586
 ```
 
 Create population_specified, a dataframe containing only the populations of the parishes of interest.
 
 ```{r define_population_specified}
-population <- data.frame(population_post$Parish,interpolated_1629 / 1000)
+population <- data.frame(population_post$Parish, interpolated_1629 / 1000)
 colnames(population) <- c("Parish","Population")
 population_specified <- population[population$Parish %in% colnames(filled[,-1]),]
 population_specified <- population_specified[match(colnames(filled[,-1]), population_specified$Parish),]
@@ -309,14 +313,17 @@ Now, we combine sestiere_pre and sestiere_post, the two dataframes that list the
 
 ```{r combine_sestiere_dfs}
 # Fix the parish names on both sestiere dataframes
-sestiere_pre$Parish <- gsub("[[:space:]]", ".", sestiere_pre$Parish)
-sestiere_pre$Parish <- sub("S.", "S", sestiere_pre$Parish)
-sestiere_post$Parish <- gsub("[[:space:]]", ".", sestiere_post$Parish)
-sestiere_post$Parish <- sub("S.", "S", sestiere_post$Parish)
+sestiere_pre$Parish <- gsub("[[:space:]]", "\\.", sestiere_pre$Parish)
+sestiere_pre$Parish <- sub("^S\\.", "S", sestiere_pre$Parish)
+sestiere_post$Parish <- gsub("[[:space:]]", "\\.", sestiere_post$Parish)
+sestiere_post$Parish <- sub("^S\\.", "S", sestiere_post$Parish)
 
 # Arrange both sestiere dataframes by sestiere
 sestiere_pre <- sestiere_pre %>% arrange(Sestiere, Parish)
 sestiere_post <- sestiere_post %>% arrange(Sestiere, Parish)
+
+# S. Marcilian and S.Simone.Piccolo is spelled S.Simeone.Piccolo in population_df, but Simeone Piccolo is not in filled because there was no data
+#setdiff(sestiere_pre$Parish, population_df$Parish)
 
 # Since we chose to interpolate using population_1586, we use sestiere_pre,
 # which is taken from the same 1586 census, to ensure that the parish names match
@@ -418,7 +425,7 @@ Now, we define our main analysis function which returns the total number of deat
 # @param original_data: a dataframe containing one variable for every parish of interest. Note that original_data does NOT get modified by subset, so original_data must already be subsetted if one only wishes to include a smaller selection of parishes.
 # @param subset: a vector containing the indices of the parishes of interest in colnames(filled_modified).
 # @param indices: a vector containing the indices generated by sampling with replacement. To analyze the original data, set indices = 1:ncol(original_data).
-# @param timestep: an integer between 1 and 1095 corresponding to the day for which the aforementioned statistics should be calculated.
+# @param timestep: an integer between 1 and nrow(filled_modified) corresponding to the day for which the aforementioned statistics should be calculated.
 # @param cumulative: a boolean specifying whether deaths occurring on days prior to timestep should be included. If cumulative is set to FALSE, only deaths on day "timestep" will be considered. If cumulative is set to TRUE, deaths up to and including day "timestep" will be added up (DEFAULT: TRUE)
 
 # @return: the list as described above
@@ -498,7 +505,7 @@ Now, we implement a generalized function to bootstrap over our entropy_procedure
 # calculated on mortality data in a specified subset of parishes on or up to a particular day.
 
 # Arguments/Options:
-# @param original_data: a dataframe containing one variable for every parish of interest. Note that original_data does NOT get modified by the parameter "subset", so original_data must already be subsetted if one only wishes to include a smaller selection of parishes.
+# @param data: a dataframe containing one variable for every parish of interest. Note that data does NOT get modified by the parameter "subset", so data must already be subsetted if one only wishes to include a smaller selection of parishes.
 # @param subset: a vector containing the indices of the parishes of interest in colnames(filled_modified).
 # @param N: an integer denoting the number of resamples to perform.
 # @param max_ts: an integer corresponding to the final day for which the aforementioned statistics should be calculated.
@@ -508,7 +515,7 @@ Now, we implement a generalized function to bootstrap over our entropy_procedure
 #----
 
 manual_boot_modified <-
-  function(original_data, subset, N, max_ts, cumulative) {
+  function(data, subset, N, max_ts, cumulative) {
     sum_mat <- matrix(NA, nrow = N, ncol = max_ts)
     shannonPDF_mat <- matrix(NA, nrow = N, ncol = max_ts)
     shannonQuantile_mat <- matrix(NA, nrow = N, ncol = max_ts)
@@ -558,7 +565,7 @@ Instead of finding the 97.5th and 2.5th percentile full runs, we find the 97.5th
 
 # Arguments/Options: 
 # @param all_runs: a dataframe containing numeric values with one column for every time point and one row for every resampling
-# @param target_percentile: an integer describing the index of the desired sorted vector all_runs. For example, if all_runs contains 1000 rows, the 95th percentile row selected by setting target_percentile = 950)
+# @param target_percentile: an integer describing the index of the desired sorted vector all_runs. For example, if all_runs contains 1000 rows, the 97.5th percentile row selected by setting target_percentile = 975)
 
 # @return: the numeric vector as described above
 #----
@@ -823,9 +830,9 @@ stats_of_whole_boot_cumulative_50_2$b1[[3]][1]
 stats_of_whole_boot_cumulative_50_2$b2[[3]][1]
 
 # Entropy of the quantile function on the final day
-stats_of_whole_cumulative_50_2$shannonQuantile[1095]
-stats_of_whole_boot_cumulative_50_2$b1[[3]][1095]
-stats_of_whole_boot_cumulative_50_2$b2[[3]][1095]
+stats_of_whole_cumulative_50_2$shannonQuantile[nrow(filled_modified)]
+stats_of_whole_boot_cumulative_50_2$b1[[3]][nrow(filled_modified)]
+stats_of_whole_boot_cumulative_50_2$b2[[3]][nrow(filled_modified)]
 
 
 # KL divergence of the quantile function on the first day from a uniform distribution
@@ -834,9 +841,9 @@ stats_of_whole_boot_cumulative_50_2$b1[[6]][1]
 stats_of_whole_boot_cumulative_50_2$b2[[6]][1]
 
 # KL divergence of the quantile function on the final day from a uniform distribution
-stats_of_whole_cumulative_50_2$uniformKL_Quantile[1095]
-stats_of_whole_boot_cumulative_50_2$b1[[6]][1095]
-stats_of_whole_boot_cumulative_50_2$b2[[6]][1095]
+stats_of_whole_cumulative_50_2$uniformKL_Quantile[nrow(filled_modified)]
+stats_of_whole_boot_cumulative_50_2$b1[[6]][nrow(filled_modified)]
+stats_of_whole_boot_cumulative_50_2$b2[[6]][nrow(filled_modified)]
 
 
 # Entropy of the PDF on the first day
@@ -845,9 +852,9 @@ stats_of_whole_boot_cumulative_50_2$b1[[2]][1]
 stats_of_whole_boot_cumulative_50_2$b2[[2]][1]
 
 # Entropy of the PDF on the final day
-stats_of_whole_cumulative_50_2$shannonPDF[1095]
-stats_of_whole_boot_cumulative_50_2$b1[[2]][1095]
-stats_of_whole_boot_cumulative_50_2$b2[[2]][1095]
+stats_of_whole_cumulative_50_2$shannonPDF[nrow(filled_modified)]
+stats_of_whole_boot_cumulative_50_2$b1[[2]][nrow(filled_modified)]
+stats_of_whole_boot_cumulative_50_2$b2[[2]][nrow(filled_modified)]
 
 
 # KL divergence of the PDF on the first day from a Gaussian distribution
@@ -856,9 +863,9 @@ stats_of_whole_boot_cumulative_50_2$b1[[4]][1]
 stats_of_whole_boot_cumulative_50_2$b2[[4]][1]
 
 # KL divergence of the PDF on the final day from a Gaussian distribution
-stats_of_whole_cumulative_50_2$negentPDF[1095]
-stats_of_whole_boot_cumulative_50_2$b1[[4]][1095]
-stats_of_whole_boot_cumulative_50_2$b2[[4]][1095]
+stats_of_whole_cumulative_50_2$negentPDF[nrow(filled_modified)]
+stats_of_whole_boot_cumulative_50_2$b1[[4]][nrow(filled_modified)]
+stats_of_whole_boot_cumulative_50_2$b2[[4]][nrow(filled_modified)]
 
 
 # KL divergence of the PDF on the first day from a uniform distribution 
@@ -867,13 +874,13 @@ stats_of_whole_boot_cumulative_50_2$b1[[5]][1]
 stats_of_whole_boot_cumulative_50_2$b2[[5]][1]
 
 # KL divergence of the PDF on the final day from a uniform distribution
-stats_of_whole_cumulative_50_2$uniformKL_PDF[1095]
-stats_of_whole_boot_cumulative_50_2$b1[[5]][1095]
-stats_of_whole_boot_cumulative_50_2$b2[[5]][1095]
+stats_of_whole_cumulative_50_2$uniformKL_PDF[nrow(filled_modified)]
+stats_of_whole_boot_cumulative_50_2$b1[[5]][nrow(filled_modified)]
+stats_of_whole_boot_cumulative_50_2$b2[[5]][nrow(filled_modified)]
 
 # Same as previous, but using the "closest runs" methodology to find the 2.5th and 97.5th percentile values
-stats_of_whole_boot_cumulative_50_2$closest_runs_025[[5]][1095]
-stats_of_whole_boot_cumulative_50_2$closest_runs_975[[5]][1095]
+stats_of_whole_boot_cumulative_50_2$closest_runs_025[[5]][nrow(filled_modified)]
+stats_of_whole_boot_cumulative_50_2$closest_runs_975[[5]][nrow(filled_modified)]
 ```
 
 Second, we print the extrema of each statistic (minima for KL divergence, maxima for entropy) calculated on the cumulative mortality data, the day on which they occurred, and the 2.5th and 97.5th percentile values on that day.
@@ -931,9 +938,9 @@ stats_of_whole_boot_instantaneous_50_2$b1[[3]][1]
 stats_of_whole_boot_instantaneous_50_2$b2[[3]][1]
 
 # Entropy of the quantile function on the final day
-stats_of_whole_instantaneous_50_2$shannonQuantile[1095]
-stats_of_whole_boot_instantaneous_50_2$b1[[3]][1095]
-stats_of_whole_boot_instantaneous_50_2$b2[[3]][1095]
+stats_of_whole_instantaneous_50_2$shannonQuantile[nrow(filled_modified)]
+stats_of_whole_boot_instantaneous_50_2$b1[[3]][nrow(filled_modified)]
+stats_of_whole_boot_instantaneous_50_2$b2[[3]][nrow(filled_modified)]
 
 
 # KL divergence of the quantile function on the first day from a uniform distribution
@@ -942,9 +949,9 @@ stats_of_whole_boot_instantaneous_50_2$b1[[6]][1]
 stats_of_whole_boot_instantaneous_50_2$b2[[6]][1]
 
 # KL divergence of the quantile function on the final day from a uniform distribution
-stats_of_whole_instantaneous_50_2$uniformKL_Quantile[1095]
-stats_of_whole_boot_instantaneous_50_2$b1[[6]][1095]
-stats_of_whole_boot_instantaneous_50_2$b2[[6]][1095]
+stats_of_whole_instantaneous_50_2$uniformKL_Quantile[nrow(filled_modified)]
+stats_of_whole_boot_instantaneous_50_2$b1[[6]][nrow(filled_modified)]
+stats_of_whole_boot_instantaneous_50_2$b2[[6]][nrow(filled_modified)]
 
 
 # Entropy of the PDF on the first day
@@ -953,9 +960,9 @@ stats_of_whole_boot_instantaneous_50_2$b1[[2]][1]
 stats_of_whole_boot_instantaneous_50_2$b2[[2]][1]
 
 # Entropy of the PDF on the final day
-stats_of_whole_instantaneous_50_2$shannonPDF[1095]
-stats_of_whole_boot_instantaneous_50_2$b1[[2]][1095]
-stats_of_whole_boot_instantaneous_50_2$b2[[2]][1095]
+stats_of_whole_instantaneous_50_2$shannonPDF[nrow(filled_modified)]
+stats_of_whole_boot_instantaneous_50_2$b1[[2]][nrow(filled_modified)]
+stats_of_whole_boot_instantaneous_50_2$b2[[2]][nrow(filled_modified)]
 
 
 # KL divergence of the PDF on the first day from a Gaussian distribution
@@ -964,9 +971,9 @@ stats_of_whole_boot_instantaneous_50_2$b1[[4]][1]
 stats_of_whole_boot_instantaneous_50_2$b2[[4]][1]
 
 # KL divergence of the PDF on the final day from a Gaussian distribution
-stats_of_whole_instantaneous_50_2$negentPDF[1095]
-stats_of_whole_boot_instantaneous_50_2$b1[[4]][1095]
-stats_of_whole_boot_instantaneous_50_2$b2[[4]][1095]
+stats_of_whole_instantaneous_50_2$negentPDF[nrow(filled_modified)]
+stats_of_whole_boot_instantaneous_50_2$b1[[4]][nrow(filled_modified)]
+stats_of_whole_boot_instantaneous_50_2$b2[[4]][nrow(filled_modified)]
 
 
 # KL divergence of the PDF on the first day from a uniform distribution
@@ -975,9 +982,9 @@ stats_of_whole_boot_instantaneous_50_2$b1[[5]][1]
 stats_of_whole_boot_instantaneous_50_2$b2[[5]][1]
 
 # KL divergence of the PDF on the final day from a uniform distribution
-stats_of_whole_instantaneous_50_2$uniformKL_PDF[1095]
-stats_of_whole_boot_instantaneous_50_2$b1[[5]][1095]
-stats_of_whole_boot_instantaneous_50_2$b2[[5]][1095]
+stats_of_whole_instantaneous_50_2$uniformKL_PDF[nrow(filled_modified)]
+stats_of_whole_boot_instantaneous_50_2$b1[[5]][nrow(filled_modified)]
+stats_of_whole_boot_instantaneous_50_2$b2[[5]][nrow(filled_modified)]
 ```
 
 Extrema:
@@ -1614,9 +1621,9 @@ Fifth, we create Figure 4, a plot of Shannon entropy of the quantile functions f
 stat_of_interest <-
   3 #1: sum, 2: shannonPDF, 3: shannonQuantile, 4: negentPDF, 5: uniformKL_PDF, 6: uniformKL_Quantile
 b1_plot_mat <-
-  matrix(NA, nrow = 1095, ncol = 6) #6 = number of stats, not sestieri
-b2_plot_mat <- matrix(NA, nrow = 1095, ncol = 6)
-observed_plot_mat <- matrix(NA, nrow = 1095, ncol = 6)
+  matrix(NA, nrow = nrow(filled_modified), ncol = 6) #6 = number of stats, not sestieri
+b2_plot_mat <- matrix(NA, nrow = nrow(filled_modified), ncol = 6)
+observed_plot_mat <- matrix(NA, nrow = nrow(filled_modified), ncol = 6)
 
 for (i in 1:6) { #6 = number of sestieri
   b1_plot_mat[, i] <-
@@ -1627,7 +1634,7 @@ for (i in 1:6) { #6 = number of sestieri
     stats_by_sestiere_cumulative_50_2[[i]][[stat_of_interest]]
 }
 
-time_series <- 1:1095
+time_series <- 1:nrow(filled_modified)
 series_names <- unique(sestiere_df_modified$Sestiere)
 
 # Ensure matrices are data.frames
@@ -2172,7 +2179,7 @@ First, we define our functions.
 
 ```{r PDF_and_Quantile_graphs, eval = FALSE}
 # Find the indices in filled$Date of the last day of every month
-end_of_month_indices <- c(which(day(filled$Date) == 1)[-1] - 1, 1095)
+end_of_month_indices <- c(which(day(filled$Date) == 1)[-1] - 1, nrow(filled_modified))
 
 # Create a new negent function that provides debugging information when NAs are present
 negent_new <- function (x, K = ceiling(log2(length(x))) + 1){ # K = number of bins
@@ -2544,7 +2551,7 @@ outliers <- c("S.Polo", "S.Stae","S.Marco") #No cases between 9/1/30 and 12/31/3
 
 filled_nodate <- filled[,-1]
 outlier_indices <- which(colnames(filled_nodate) %in% outliers)
-total_deaths <- colSums(filled_nodate[1:1095,])
+total_deaths <- colSums(filled_nodate[1:nrow(filled_modified),])
 
 print(colnames(filled_nodate) == population_specified$Parish)
 
@@ -2553,11 +2560,11 @@ write.csv(export_df, "total_deaths.csv")
 
 print(outlier_indices)
 
-mort_df <- as.data.frame(matrix(NA, ncol = 3, nrow = 1095))
+mort_df <- as.data.frame(matrix(NA, ncol = 3, nrow = nrow(filled_modified)))
 colnames(mort_df) <- c("Date", "Mort", "CumMort")
 mort_df$Date <- as.Date(filled$Date)
 
-for(i in 1:1095){
+for(i in 1:nrow(filled_modified)){
   mort_df[i,2] <- sum(as.numeric(filled_nodate[i,]) / (population_specified$Population * 1000)) / ncol(filled_nodate)
   mort_df[i,3] <- sum(as.numeric(colSums(filled_nodate[1:i,])) / (population_specified$Population * 1000)) / ncol(filled_nodate)
 }
@@ -2607,7 +2614,7 @@ for(i in unique(sestiere_df_modified$Sestiere)){
 print(sum(sestiere_vec) / length(sestiere_vec))
 print(sd(sestiere_vec))
 
-final_mortality <- as.numeric(colSums(filled_modified[1:1095,-1]) / (population_specified_modified$Population * 1000))
+final_mortality <- as.numeric(colSums(filled_modified[1:nrow(filled_modified),-1]) / (population_specified_modified$Population * 1000))
 mean_mortality <- c()
 for(i in unique(sestiere_df_modified$Sestiere)){
   sestiere_mortality <- final_mortality[which(population_specified_modified$Parish %in% sestiere_df_modified$Parish[sestiere_df_modified$Sestiere == i])]
@@ -2618,11 +2625,12 @@ print(sum(mean_mortality) / length(mean_mortality))
 print(sd(mean_mortality))
 ```
 
-## Find Maximum Entropy of PDF
+## Testing Binning Methods
 
 In this section, we compare the entropy of the PDF with that of the histogram-approximated normal distribution with identical mean and variance to the data. In particular, we make this comparison for three bin selection methods.
 
 ### Sturges' Rule
+
 Here, we implement Sturges' Rule to determine the number of bins ($K = \lceil \log_2(n)\rceil + 1$). Since we have a consistent number of parishes ($n = 50$), Sturges' Rule will always result in a 7 bin histogram. 
 
 ```{r find PDF max entropy sturges rule}
@@ -2650,10 +2658,9 @@ for(i in 1:10){
   p <- normal_approx(case_vector_2)
 }
 
-#max_entropy_vec <- rep(0, 1095)
-#shannon_PDF_vec <- rep(0, 1095)
-#case_df <- as.data.frame(matrix(data = NA, nrow = 1095, ncol = 50))
-#for(i in 1:1095){
+#shannon_PDF_vec <- rep(0, nrow(filled_modified))
+#case_df <- as.data.frame(matrix(data = NA, nrow = nrow(filled_modified), ncol = ncol(filled_modified[,-1])))
+#for(i in 1:nrow(filled_modified)){
 #  case_vector_2 <- colSums(filled_modified[1:i,-1])/(population_specified_modified$Population * 1000)
 #  case_df[i,] <- case_vector_2
 #  p <- normal_approx(case_vector_2)
@@ -2667,7 +2674,8 @@ for(i in 1:10){
 #  shannon_PDF_vec[i] <- shannon_PDF
 #}
 ```
-Now, we plot
+
+Now, we plot:
 1. the entropy of the resulting PDF (black) against that of the normal distribution with the same mean and variance (red) for every day in the epidemic
 2. the negentropy of the PDF, calculated as entropy of the normal distribution - entropy of the PDF
 
@@ -2731,7 +2739,9 @@ plot_grid(title,
 ```
 
 ### Freedman-Diaconis
+
 Here, we implement the Freedman-Diaconis rule to determine our bin width. The Freedman-Diaconis rule states that $\text{Bin width} = 2 \cdot \frac{\text{IQR}(x)}{\sqrt[3]{x}}$. 
+
 ```{r find PDF max entropy using freedman diaconis, eval = FALSE}
 freedman_diaconis <- function (x){
   bin_width = 2 * IQR(x) * (length(x))^(-1/3)
@@ -2739,10 +2749,11 @@ freedman_diaconis <- function (x){
   return(num_bins)
 }
 
-max_entropy_vec <- rep(NA_real_, 1095)
-shannon_PDF_vec <- rep(NA_real_, 1095)
+max_entropy_vec <- rep(NA_real_, nrow(filled_modified))
+shannon_PDF_vec <- rep(NA_real_, nrow(filled_modified))
+
 # Exclude the first day since the high prevalence of zeroes results in 
-for(i in 2:1095){
+for(i in 2:nrow(filled_modified)){
   case_vector_2 <- colSums(filled_modified[1:i,-1])/(population_specified_modified$Population * 1000)
   num_bins <- as.numeric(freedman_diaconis(case_vector_2))
   p <- normal_approx(case_vector_2, K = num_bins)
@@ -2762,7 +2773,9 @@ for(i in 2:1095){
 }
 
 ```
+
 Now, we plot the entropy of the resulting PDF (black) against that of the normal distribution with the same mean and variance (red) for every day in the epidemic.
+
 ```{r plot PDF vs normal Freedman-Diaconis, eval = FALSE}
 plot_df<- as.data.frame(cbind(shannon_PDF_vec, max_entropy_vec, filled$Date))
 plot1 <- ggplot(data = plot_df, aes(x = filled$Date, y = shannon_PDF_vec)) +
@@ -2823,8 +2836,10 @@ plot_grid(title,
 ```
 
 ### Kernel-Density Estimation
+
 Finally, here we use Kernel-Density estimation with 512 bins. Note that because the total number of bins is substantially greater than the previous two methods, the magnitude of entropy will also be larger. 
-```{r kde entropy, eval = FALSE}
+
+```{r kde entropy}
 kde_entropy <- function(x, n_points = 512) {
   x <- x[is.finite(x)]
 
@@ -2853,18 +2868,20 @@ kde_entropy <- function(x, n_points = 512) {
   )
 }
 
-max_entropy_vec <- rep(0, 1095)
-shannon_PDF_vec <- rep(0, 1095)
+max_entropy_vec <- rep(0, nrow(filled_modified))
+shannon_PDF_vec <- rep(0, nrow(filled_modified))
 
-for (i in 1:1095) {
+for (i in 1:nrow(filled_modified)) {
   case_vector_2 <- colSums(filled_modified[1:i, -1]) / (population_specified_modified$Population * 1000)
   kde_output_vec <- kde_entropy(case_vector_2)
   shannon_PDF_vec[i] <- kde_output_vec[1]
   max_entropy_vec[i] <- kde_output_vec[2]
 }
 ```
+
 Now, we plot the entropy of the resulting PDF (black) against that of the normal distribution with the same mean and variance (red) for every day in the epidemic.
-```{r kde entropy plot, eval = FALSE}
+
+```{r kde entropy plot}
 plot_df <- as.data.frame(cbind(shannon_PDF_vec, max_entropy_vec, filled$Date))
 plot1 <- ggplot(data = plot_df, aes(x = filled$Date, y = shannon_PDF_vec)) +
   geom_line() +
@@ -2883,7 +2900,7 @@ plot1 <- ggplot(data = plot_df, aes(x = filled$Date, y = shannon_PDF_vec)) +
 
 plot2 <- ggplot(data = plot_df, aes(x = filled$Date, y = max_entropy_vec - shannon_PDF_vec)) +
   geom_line() +
-  geom_line(aes(x = filled$Date, y = rep(0,1095)), col = "red") +
+  geom_line(aes(x = filled$Date, y = rep(0, nrow(filled_modified))), col = "red") +
   scale_x_date(date_breaks = "12 months", date_labels = "%m-%Y") +
   theme_bw() +
   theme(
@@ -2922,5 +2939,214 @@ plot_grid(title,
           # rel_heights values control vertical title margins
           rel_heights = c(0.1, 1))
 ```
-### Conclusions
+
+### Binning Method Conclusions
+
 Note that regardless of the binning method used, negentropy starts low, increases until the primary outbreak, then drops and stays low for the rest of the epidemic.
+
+## Dynamic Parish Populations
+
+In this section, we repeat our entropy calculations using dynamic parish populations; specifically, the population of a parish on day $d$ is represented as the population of that parish on January 1, 1629 minus the total deaths in that parish up to but not including day $d$. Ignoring births, the purpose of this analysis is to quantify the extent to which the assumption of fixed parish populations artifactually drives the distribution of cumulative mortality towards uniformity.
+
+Non-dynamic populations (baseline).
+```{r non-dynamic parish populations}
+instantaneous_mortality_df <- as.data.frame(matrix(NA_real_, nrow = nrow(filled_modified), ncol = ncol(filled_modified) - 1))
+
+shannonPDF_vec <- rep(0, nrow(filled_modified))
+shannonQuantile_vec <- rep(0, nrow(filled_modified))
+negentPDF_vec <- rep(0, nrow(filled_modified))
+uniformKL_Quantile_vec <- rep(0, nrow(filled_modified))
+
+for(i in 1:nrow(filled_modified)){
+  instantaneous_cv <- filled_modified[i, -1] / (population_specified_modified$Population * 1000)
+  instantaneous_mortality_df[i, ] <- instantaneous_cv
+  
+  cumulative_cv <- colSums(instantaneous_mortality_df[1:i,])
+  cumulative_cv <- sort(cumulative_cv)
+    
+  # Normalized case vector (cumulative_cv_norm): quantile function
+  cumulative_cv_norm <- cumulative_cv / sum(cumulative_cv)
+  
+  kde_output_vec_2 <- kde_entropy(cumulative_cv)
+    
+  shannon_PDF <- kde_output_vec_2[1]
+  max_entropy_PDF <- kde_output_vec_2[2]
+  
+  shannon_quantile <- -1 * sum(cumulative_cv_norm[cumulative_cv_norm != 0] * log(cumulative_cv_norm[cumulative_cv_norm != 0]))
+    
+  negent_PDF <- max_entropy_PDF - shannon_PDF
+  
+  uniform_KL_quantile <- KL_new(cumulative_cv_norm, rep(1 / length(cumulative_cv_norm), length(cumulative_cv_norm)))
+
+  shannonPDF_vec[i] <- shannon_PDF
+  shannonQuantile_vec[i] <- shannon_quantile
+  negentPDF_vec[i] <- negent_PDF
+  uniformKL_Quantile_vec[i] <- uniform_KL_quantile
+}
+```
+
+Dynamic populations.
+```{r dynamic parish populations}
+population_specified_dynamic <- population_specified_modified
+instantaneous_dynamic_mortality_df <- as.data.frame(matrix(NA_real_, nrow = nrow(filled_modified), ncol = ncol(filled_modified) - 1))
+
+shannonPDF_dynamic_vec <- rep(0, nrow(filled_modified))
+shannonQuantile_dynamic_vec <- rep(0, nrow(filled_modified))
+negentPDF_dynamic_vec <- rep(0, nrow(filled_modified))
+uniformKL_Quantile_dynamic_vec <- rep(0, nrow(filled_modified))
+
+for(i in 1:nrow(filled_modified)){
+  instantaneous_cv <- filled_modified[i, -1] / (population_specified_dynamic$Population * 1000)
+  instantaneous_dynamic_mortality_df[i, ] <- instantaneous_cv
+  
+  cumulative_cv <- colSums(instantaneous_dynamic_mortality_df[1:i,])
+  cumulative_cv <- sort(cumulative_cv)
+    
+  # Normalized case vector (cumulative_cv_norm): quantile function
+  cumulative_cv_norm <- cumulative_cv / sum(cumulative_cv)
+  
+  kde_output_vec_2 <- kde_entropy(cumulative_cv)
+    
+  shannon_PDF <- kde_output_vec_2[1]
+  max_entropy_PDF <- kde_output_vec_2[2]
+  
+  shannon_quantile <- -1 * sum(cumulative_cv_norm[cumulative_cv_norm != 0] * log(cumulative_cv_norm[cumulative_cv_norm != 0]))
+    
+  negent_PDF <- max_entropy_PDF - shannon_PDF
+  
+  uniform_KL_quantile <- KL_new(cumulative_cv_norm, rep(1 / length(cumulative_cv_norm), length(cumulative_cv_norm)))
+
+  shannonPDF_dynamic_vec[i] <- shannon_PDF
+  shannonQuantile_dynamic_vec[i] <- shannon_quantile
+  negentPDF_dynamic_vec[i] <- negent_PDF
+  uniformKL_Quantile_dynamic_vec[i] <- uniform_KL_quantile
+  
+  population_specified_dynamic$Population <- population_specified_dynamic$Population - (as.numeric(filled_modified[i,-1]) / 1000)
+}
+```
+
+Plot the results
+
+```{r plot dynamic parish populations}
+plot.ts(shannonPDF_vec)
+lines(shannonPDF_dynamic_vec, col = "red")
+
+plot.ts(shannonQuantile_vec, ylim = c(3.5, 3.9))
+lines(shannonQuantile_dynamic_vec, col = "red")
+
+plot.ts(negentPDF_vec)
+lines(negentPDF_dynamic_vec, col = "red")
+
+plot.ts(uniformKL_Quantile_vec, ylim = c(0, 0.4))
+lines(uniformKL_Quantile_dynamic_vec, col = "red")
+```
+
+The change in quantile function entropy after the outbreak is mitigated. This raises the question of what might happen if we start the analysis on the first day of the outbreak.
+
+Start on the first day of the outbreak.
+
+```{r start on outbreak}
+num_zeroes <- rep(0, nrow(filled_modified))
+for(i in 1:nrow(filled_modified)){
+  num_zeroes[i] <- sum(filled_modified[i,-1] == 0)
+}
+print(match(min(num_zeroes), num_zeroes))
+print(match(as.Date("1630-09-01", format = "%Y-%m-%d"), filled_modified$Date))
+
+new_start_date <- 637
+```
+
+Non-dynamic populations (baseline).
+```{r start on outbreak non-dynamic parish populations}
+instantaneous_mortality_df <- as.data.frame(matrix(NA_real_, nrow = nrow(filled_modified), ncol = ncol(filled_modified) - 1))
+
+shannonPDF_vec <- rep(NA_real_, nrow(filled_modified))
+shannonQuantile_vec <- rep(NA_real_, nrow(filled_modified))
+negentPDF_vec <- rep(NA_real_, nrow(filled_modified))
+uniformKL_Quantile_vec <- rep(NA_real_, nrow(filled_modified))
+
+for(i in new_start_date:nrow(filled_modified)){
+  instantaneous_cv <- filled_modified[i, -1] / (population_specified_modified$Population * 1000)
+  instantaneous_mortality_df[i, ] <- instantaneous_cv
+  
+  cumulative_cv <- colSums(instantaneous_mortality_df[new_start_date:i,])
+  cumulative_cv <- sort(cumulative_cv)
+    
+  # Normalized case vector (cumulative_cv_norm): quantile function
+  cumulative_cv_norm <- cumulative_cv / sum(cumulative_cv)
+  
+  kde_output_vec_2 <- kde_entropy(cumulative_cv)
+  
+  shannon_PDF <- kde_output_vec_2[1]
+  max_entropy_PDF <- kde_output_vec_2[2]
+  
+  shannon_quantile <- -1 * sum(cumulative_cv_norm[cumulative_cv_norm != 0] * log(cumulative_cv_norm[cumulative_cv_norm != 0]))
+    
+  negent_PDF <- max_entropy_PDF - shannon_PDF
+  
+  uniform_KL_quantile <- KL_new(cumulative_cv_norm, rep(1 / length(cumulative_cv_norm), length(cumulative_cv_norm)))
+
+  shannonPDF_vec[i] <- shannon_PDF
+  shannonQuantile_vec[i] <- shannon_quantile
+  negentPDF_vec[i] <- negent_PDF
+  uniformKL_Quantile_vec[i] <- uniform_KL_quantile
+}
+```
+
+Dynamic populations.
+```{r start on outbreak dynamic parish populations}
+population_specified_dynamic <- population_specified_modified
+instantaneous_dynamic_mortality_df <- as.data.frame(matrix(NA_real_, nrow = nrow(filled_modified), ncol = ncol(filled_modified) - 1))
+
+shannonPDF_dynamic_vec <- rep(NA_real_, nrow(filled_modified))
+shannonQuantile_dynamic_vec <- rep(NA_real_, nrow(filled_modified))
+negentPDF_dynamic_vec <- rep(NA_real_, nrow(filled_modified))
+uniformKL_Quantile_dynamic_vec <- rep(NA_real_, nrow(filled_modified))
+
+for(i in new_start_date:nrow(filled_modified)){
+  instantaneous_cv <- filled_modified[i, -1] / (population_specified_dynamic$Population * 1000)
+  instantaneous_dynamic_mortality_df[i, ] <- instantaneous_cv
+  
+  cumulative_cv <- colSums(instantaneous_dynamic_mortality_df[new_start_date:i,])
+  cumulative_cv <- sort(cumulative_cv)
+    
+  # Normalized case vector (cumulative_cv_norm): quantile function
+  cumulative_cv_norm <- cumulative_cv / sum(cumulative_cv)
+  
+  kde_output_vec_2 <- kde_entropy(cumulative_cv)
+    
+  shannon_PDF <- kde_output_vec_2[1]
+  max_entropy_PDF <- kde_output_vec_2[2]
+  
+  shannon_quantile <- -1 * sum(cumulative_cv_norm[cumulative_cv_norm != 0] * log(cumulative_cv_norm[cumulative_cv_norm != 0]))
+    
+  negent_PDF <- max_entropy_PDF - shannon_PDF
+  
+  uniform_KL_quantile <- KL_new(cumulative_cv_norm, rep(1 / length(cumulative_cv_norm), length(cumulative_cv_norm)))
+
+  shannonPDF_dynamic_vec[i] <- shannon_PDF
+  shannonQuantile_dynamic_vec[i] <- shannon_quantile
+  negentPDF_dynamic_vec[i] <- negent_PDF
+  uniformKL_Quantile_dynamic_vec[i] <- uniform_KL_quantile
+  
+  population_specified_dynamic$Population <- population_specified_dynamic$Population - (as.numeric(filled_modified[i,-1]) / 1000)
+}
+```
+
+Plot the results
+
+```{r start on outbreak plot dynamic parish populations}
+plot.ts(shannonPDF_vec, xlim = c(new_start_date, nrow(filled_modified)), ylim = c(-7, 0))
+lines(shannonPDF_dynamic_vec, col = "red")
+
+plot.ts(shannonQuantile_vec, xlim = c(new_start_date, nrow(filled_modified)))
+lines(shannonQuantile_dynamic_vec, col = "red")
+
+plot.ts(negentPDF_vec, xlim = c(new_start_date, nrow(filled_modified)), ylim = c(0, 0.2))
+lines(negentPDF_dynamic_vec, col = "red")
+lines(rowSums(filled_modified[,-1])/1000, col = "blue")
+
+plot.ts(uniformKL_Quantile_vec, xlim = c(new_start_date, nrow(filled_modified)), ylim = c(0, 0.4))
+lines(uniformKL_Quantile_dynamic_vec, col = "red")
+lines(rowSums(filled_modified[,-1])/2000, col = "blue")
+```
