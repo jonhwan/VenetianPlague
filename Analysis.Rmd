@@ -585,7 +585,7 @@ manual_boot_modified <-
 
 ## Identify 95% CI
 
-Instead of finding the 97.5th and 2.5th percentile full runs, we find the 97.5th and 2.5th percentile values at each time point.
+In our main analysis, we find the 97.5th and 2.5th percentile values at each time point (accomplished by simply sorting for each day and indexing for the desired percentile, a task which is already performed in the bootstrapping functions themselves). However, as a sensitivity analysis, we define a function here which sums up the values across each run and approximates the 97.5th and 2.5th percentile full runs. 
 
 ```{r define find_closest_run}
 #----
@@ -908,7 +908,7 @@ stats_of_whole_cumulative_50_2$uniformKL_PDF[nrow(filled_modified)]
 stats_of_whole_boot_cumulative_50_2$b1[[5]][nrow(filled_modified)]
 stats_of_whole_boot_cumulative_50_2$b2[[5]][nrow(filled_modified)]
 
-# Same as previous, but using the "closest runs" methodology to find the 2.5th and 97.5th percentile values
+# Same as previous, but using the "closest runs" methodology to find the 2.5th and 97.5th percentile values (not included in main results)
 stats_of_whole_boot_cumulative_50_2$closest_runs_025[[5]][nrow(filled_modified)]
 stats_of_whole_boot_cumulative_50_2$closest_runs_975[[5]][nrow(filled_modified)]
 ```
@@ -2049,6 +2049,37 @@ population_pre$Parish <- stri_trans_general(population_pre$Parish, id = "Latin-A
 population_post$Parish <- gsub("[[:space:]]",".",population_post$Parish)
 population_post$Parish <- stri_trans_general(population_post$Parish, id = "Latin-ASCII")
 
+# Identify and remove the parishes that are not contained in both the 
+# 1586 census and the 1696 census
+remove_vec <- c()
+for(i in 1:length(population_pre$Parish)){
+  if(!(population_pre$Parish[i] %in% population_post$Parish)){
+    remove_vec <- c(remove_vec,i)
+  }
+}
+
+if(length(remove_vec) > 0){
+  population_pre <- population_pre[-remove_vec,]
+}
+
+remove_vec <- c()
+for(i in 1:length(population_post$Parish)){
+  if(!(population_post$Parish[i] %in% population_pre$Parish)){
+    remove_vec <- c(remove_vec, i)
+  }
+}
+
+if(length(remove_vec) > 0){
+  population_post <- population_post[-remove_vec,]
+}
+
+# Establish a consistent ordering of the parishes (alphabetical)
+population_post <- population_post %>% arrange(Parish)
+population_pre <- population_pre %>% arrange(Parish)
+
+# Remove the 1509 census data because the vast majority of values are NAs
+population_pre <- population_pre[,-2]
+
 non_NAs <- c()
 for(i in 1:length(shap@data$NAME)){
   if(length(which(!is.na(shap@data[i,4:ncol(shap@data)]))) != 0){
@@ -2085,16 +2116,40 @@ for(j in 1:ncol(population_pre)){
   population_pre[,j] <- as.numeric(population_pre[,j])
 }
 
-interpolated_1629 <- as.data.frame(matrix(nrow=length(population_pre$Population_1586),ncol=2))
-colnames(interpolated_1629) <- c("Parish","Population")
-interpolated_1629$Parish <- population_pre$Parish
-interpolated_1629$Population <- (20.45589-(1-0.8990027)*population_pre$Population_1586)*43/110 + population_pre$Population_1586
+population_post$Population <- as.numeric(population_post$Population) * 1000
+
+# Merge population_pre and population_post into one dataframe, population_df
+population_df <- as.data.frame(cbind(population_pre, population_post[,-1]))
+colnames(population_df) <- c("Parish", "Population_1551", "Population_1581", 
+                             "Population_1586", "Population_1696")
+
+interpolated_1629 <- as.numeric(population_df$Population_1586) + (43 / 110) * (population_df$Population_1696 - population_df$Population_1586)
+
+population <- data.frame(population_post$Parish, interpolated_1629 / 1000)
+colnames(population) <- c("Parish","Population")
+population_specified <- population[population$Parish %in% colnames(filled[,-1]),]
+population_specified <- population_specified[match(colnames(filled[,-1]), population_specified$Parish),]
+
+# Organize shap@data by NAME (parish name) and remove the parishes not in filled
+
+#shap@data %>% arrange(NAME)
+
+#remove_vec <- c()
+#for(i in 1:length(shap@data$NAME)){
+#  if(!(shap@data$NAME[i] %in% population_specified$Parish)){
+#    remove_vec <- c(remove_vec,i)
+#  }
+#}
+
+#if(length(remove_vec) > 0){
+#  shap@data <- shap@data[-remove_vec,]
+#}
 
 for(i in 1:nrow(shap@data)){
-  if(shap@data$NAME[i] %in% interpolated_1629$Parish){
+  if(shap@data$NAME[i] %in% population_specified$Parish){
     # print(shap@data$NAME[i])
     # print(match(shap@data$NAME[i],interpolated_1629$Parish))
-    shap@data[i,3:(ncol(shap@data)-1)] <- shap@data[i,3:(ncol(shap@data)-1)]/interpolated_1629$Population[match(shap@data$NAME[i],interpolated_1629$Parish)]
+    shap@data[i,3:(ncol(shap@data)-1)] <- shap@data[i,3:(ncol(shap@data)-1)]/population_specified$Population[match(shap@data$NAME[i],population_specified$Parish)]
   }
 }
 ```
@@ -2158,7 +2213,7 @@ for(i in (4:(ncol(shap@data)-1))){
 # print(plot_list6)
 #save(plot_list6,file="plot_list6.RData")
 ```
-Save the plots for Figure 1 (would normally be uncommented)
+Save the choropleth plots for Figure 1 (would normally be uncommented)
 ```{r choropleth save plot, eval = FALSE}
 # CURRENT 7_8_26 (START OF UNCOMMENT SECTION)
 #plot_list7 <- list(plot1=pl[[1]],plot2=pl[[22]],plot3=pl[[36]])
@@ -2711,6 +2766,7 @@ normal_approx <- function (x, K = ceiling(log2(length(x))) + 1){
 shannon_PDF_vec <- rep(NA_real_, nrow(filled_modified))
 max_entropy_vec <- rep(NA_real_, nrow(filled_modified))
 max_differential_entropy_vec <- rep(NA_real_, nrow(filled_modified))
+KL_divergence_vec <- rep(NA_real_, nrow(filled_modified))
 case_df <- as.data.frame(matrix(data = NA, nrow = nrow(filled_modified), ncol = ncol(filled_modified[,-1])))
 
 for(i in 1:nrow(filled_modified)){
@@ -2721,11 +2777,14 @@ for(i in 1:nrow(filled_modified)){
   max_differential_entropy <- log(sd(case_vector_2) * sqrt(2 * pi * exp(1))) #Differential Entropy
   kern <- as.numeric(PDF_approx(case_vector_2))
   kern <- kern/sum(kern)
-  kern_norm <- kern / sum(kern)
+  
   shannon_PDF <- -1 * sum(kern[kern != 0] * log(kern[kern != 0]))
+  
+  KL_divergence <- (-1 * shannon_PDF) - sum(kern[kern != 0] * log(p[kern != 0]))
   
   shannon_PDF_vec[i] <- shannon_PDF
   max_entropy_vec[i] <- max_entropy
+  KL_divergence_vec[i] <- KL_divergence
   max_differential_entropy_vec[i] <- max_differential_entropy
 }
 ```
@@ -2737,11 +2796,11 @@ Now, we plot:
 
 ```{r plot PDF vs normal Sturges rule}
 plot_df <- as.data.frame(cbind(shannon_PDF_vec, max_entropy_vec, max_differential_entropy_vec, filled$Date))
-colnames(plot_df) <- 
+
 plot1 <- ggplot(data = plot_df, aes(x = filled$Date, y = shannon_PDF_vec)) +
   geom_line() +
   geom_line(aes(x = filled$Date, y = max_entropy_vec), col = "red") +
-  geom_line(aes(x = filled$Date, y = max_differential_entropy_vec), col = "blue") +
+  #geom_line(aes(x = filled$Date, y = max_differential_entropy_vec), col = "blue") +
   scale_x_date(date_breaks = "12 months", date_labels = "%m-%Y") +
   theme_bw() +
   theme(
@@ -2757,6 +2816,8 @@ plot1 <- ggplot(data = plot_df, aes(x = filled$Date, y = shannon_PDF_vec)) +
 plot2 <- ggplot(data = plot_df, aes(x = filled$Date, y = max_entropy_vec - shannon_PDF_vec)) +
   geom_line() +
   geom_hline(yintercept = 0, color = "red") +
+  geom_line(aes(x = filled$Date, y = KL_divergence_vec), color = "blue") +
+  coord_cartesian(ylim = c(-0.5, 0.5)) +
   scale_x_date(date_breaks = "12 months", date_labels = "%m-%Y") +
   theme_bw() +
   theme(
@@ -2829,7 +2890,7 @@ for(i in 2:nrow(filled_modified)){
   shannon_PDF <- -1 * sum(kern[kern != 0] * log(kern[kern != 0]))
   
   max_entropy_vec[i] <- max_entropy
-  max_differential_entorpy_vec[i] <- max_differential_entropy
+  max_differential_entropy_vec[i] <- max_differential_entropy
   shannon_PDF_vec[i] <- shannon_PDF
 }
 
@@ -3105,14 +3166,21 @@ lines(uniformKL_Quantile_dynamic_vec, col = "red")
 
 The change in quantile function entropy after the outbreak is mitigated. This raises the question of what might happen if we start the analysis on the first day of the outbreak.
 
-Start on the first day of the outbreak.
+## Start at the Outbreak
 
+Identify the first day of the outbreak (new_start_date).
 ```{r start on outbreak}
+# Find how many parishes had zero deaths on a particular day
 num_zeroes <- rep(0, nrow(filled_modified))
+
 for(i in 1:nrow(filled_modified)){
   num_zeroes[i] <- sum(filled_modified[i,-1] == 0)
 }
+
+# Print the day on which the number of parishes with at least one death was greatest
 print(match(min(num_zeroes), num_zeroes))
+
+# Print the index of September 1, 1630
 print(match(as.Date("1630-09-01", format = "%Y-%m-%d"), filled_modified$Date))
 
 new_start_date <- 637
