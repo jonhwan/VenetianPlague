@@ -13,10 +13,10 @@ This notebook cleans the mortality data from the 1630-1631 Venetian Plague, calc
 
 # Initialization
 
-Initialize renv and load packages.
+Load packages.
 
 ```{r setup, include=TRUE, warning=FALSE,message=FALSE}
-renv::init()
+#renv::init()
 
 library(tidyverse)
 library(rootSolve)
@@ -37,6 +37,7 @@ library(lubridate)
 library(tmap)
 library(ggplotify)
 library(sf)
+library(stringi)
 sf_use_s2(FALSE)
 
 # Clear environment
@@ -88,6 +89,9 @@ all$Date <- as.Date(all$Date, format = "%m/%d/%Y")
 # Fix artifacts for column names
 colnames(all) <- sub("^S\\.", "S", colnames(all))
 
+# Remove diacritics
+colnames(all) <- stri_trans_general(colnames(all), id = "Latin-ASCII")
+
 # Convert mortality data in all into integer types
 for(column in 1:ncol(all)){
   if(column == 1){
@@ -104,6 +108,9 @@ filled$Date <- as.Date(filled$Date, format = "%Y-%m-%d")
 
 # Fix the parish name artifacts in filled (import_csv replaces spaces with periods)
 colnames(filled) <- sub("^S\\.", "S", colnames(filled))
+
+# Remove diacritics
+colnames(filled) <- stri_trans_general(colnames(filled), id = "Latin-ASCII")
 
 # Convert mortality data in filled into integer types
 for(column in 1:ncol(filled)){
@@ -125,12 +132,18 @@ colnames(geo_df)[1] <- "Parish"
 geo_df$Parish <- gsub("[[:space:]]", ".", geo_df$Parish)
 geo_df$Parish <- sub("^S\\.", "S", geo_df$Parish)
 
+# Remove diacritics
+geo_df$Parish <- stri_trans_general(geo_df$Parish, id = "Latin-ASCII")
+
 # Get rid of Angelo.Rafael because it has no lat/long data
 # geo_df <- geo_df[!grepl("Angelo.Rafael",geo_df$Parish),]
 
 # Fix population
 population$Parish <- gsub("[[:space:]]", ".", population$Parish)
 population$Parish <- sub("^S\\.", "S", population$Parish)
+
+# Remove diacritics
+population$Parish <- stri_trans_general(population$Parish, id = "Latin-ASCII")
 
 # What are the missing cities in geo_df?
 setdiff(geo_df$Parish, colnames(filled))
@@ -167,12 +180,19 @@ Clean the population datasets.
 colnames(population_pre) <- c("Parish", "Population_1509", "Population_1551", 
                               "Population_1581", "Population_1586")
 
-# Remove artifacts
+# Remove space artifacts
 population_pre$Parish <- gsub("[[:space:]]", ".", population_pre$Parish)
 population_pre$Parish <- sub("^S\\.", "S", population_pre$Parish)
 
+# Remove diacritics
+population_pre$Parish <- stri_trans_general(population_pre$Parish, id = "Latin-ASCII")
+
+# Remove space artifacts
 population_post$Parish <- gsub("[[:space:]]", ".", population_post$Parish)
 population_post$Parish <- sub("^S\\.", "S", population_post$Parish)
+
+# Remove diacritics
+population_post$Parish <- stri_trans_general(population_post$Parish, id = "Latin-ASCII")
 
 # Identify and remove the parishes that are not contained in both the 
 # 1586 census and the 1696 census
@@ -312,11 +332,21 @@ population_specified <- population_specified[match(colnames(filled[,-1]), popula
 Now, we combine sestiere_pre and sestiere_post, the two dataframes that list the parishes within each sestiere (a sestiere is a larger geographical area that contains multiple parishes).
 
 ```{r combine_sestiere_dfs}
-# Fix the parish names on both sestiere dataframes
-sestiere_pre$Parish <- gsub("[[:space:]]", "\\.", sestiere_pre$Parish)
+# Fix the parish names on sestiere_pre
+
+# Remove space artifacts
+sestiere_pre$Parish <- gsub("[[:space:]]", ".", sestiere_pre$Parish)
 sestiere_pre$Parish <- sub("^S\\.", "S", sestiere_pre$Parish)
-sestiere_post$Parish <- gsub("[[:space:]]", "\\.", sestiere_post$Parish)
+
+# Remove diacritics
+sestiere_pre$Parish <- stri_trans_general(sestiere_pre$Parish, id = "Latin-ASCII")
+
+# Fix the parish names on sestiere_post
+sestiere_post$Parish <- gsub("[[:space:]]", ".", sestiere_post$Parish)
 sestiere_post$Parish <- sub("^S\\.", "S", sestiere_post$Parish)
+
+# Remove diacritics
+sestiere_post$Parish <- stri_trans_general(sestiere_post$Parish, id = "Latin-ASCII")
 
 # Arrange both sestiere dataframes by sestiere
 sestiere_pre <- sestiere_pre %>% arrange(Sestiere, Parish)
@@ -369,7 +399,7 @@ For our histogram approximation of the PDF, we use Sturges's Rule to choose $K$,
 PDF_approx <- function(x, K = ceiling(log2(length(x))) + 1) {
   p <- table(cut(x, breaks = K)) / length(x)
   sigma2 <- sum((1:K) ^ 2 * p) - sum((1:K) * p) ^ 2
-  p <- p[(p > 0)]
+  #p <- p[(p > 0)]
   return(p)
 }
 ```
@@ -411,24 +441,24 @@ Now, we define our main analysis function which returns the total number of deat
 
 ```{r define_entropy_procedure}
 #---- 
-# Documentation: entropy_procedure
-# Usage: entropy_procedure(original_data, subset, indices, timestep, cumulative)
-# @description: Return a list containing the sum of all cases (sum), 
-# Shannon entropy of the PDF (shannonPDF), 
-# Shannon entropy of the quantile function (shannonQuantile), 
-# KL divergence of the PDF from a Gaussian distribution (negentPDF), 
-# KL divergence of the PDF from a uniform distribution (uniformKL_PDF),
-# and KL divergence of the quantile function from a uniform distribution (uniformKL_Quantile)
-# calculated on mortality data in a specified subset of parishes on or up to a particular day
+#' Documentation: entropy_procedure
+#' Usage: entropy_procedure(original_data, subset, indices, timestep, cumulative)
+#' @description: Return a list containing the sum of all cases (sum), 
+#' Shannon entropy of the PDF (shannonPDF), 
+#' Shannon entropy of the quantile function (shannonQuantile), 
+#' KL divergence of the PDF from a Gaussian distribution (negentPDF), 
+#' KL divergence of the PDF from a uniform distribution (uniformKL_PDF),
+#' and KL divergence of the quantile function from a uniform distribution (uniformKL_Quantile)
+#' calculated on mortality data in a specified subset of parishes on or up to a particular day
 
-# Arguments/Options:
-# @param original_data: a dataframe containing one variable for every parish of interest. Note that original_data does NOT get modified by subset, so original_data must already be subsetted if one only wishes to include a smaller selection of parishes.
-# @param subset: a vector containing the indices of the parishes of interest in colnames(filled_modified).
-# @param indices: a vector containing the indices generated by sampling with replacement. To analyze the original data, set indices = 1:ncol(original_data).
-# @param timestep: an integer between 1 and nrow(filled_modified) corresponding to the day for which the aforementioned statistics should be calculated.
-# @param cumulative: a boolean specifying whether deaths occurring on days prior to timestep should be included. If cumulative is set to FALSE, only deaths on day "timestep" will be considered. If cumulative is set to TRUE, deaths up to and including day "timestep" will be added up (DEFAULT: TRUE)
+#' Arguments/Options:
+#' @param original_data: a dataframe containing one variable for every parish of interest. Note that original_data does NOT get modified by subset, so original_data must already be subsetted if one only wishes to include a smaller selection of parishes.
+#' @param subset: a vector containing the indices of the parishes of interest in colnames(filled_modified).
+#' @param indices: a vector containing the indices generated by sampling with replacement. To analyze the original data, set indices = 1:ncol(original_data).
+#' @param timestep: an integer between 1 and nrow(filled_modified) corresponding to the day for which the aforementioned statistics should be calculated.
+#' @param cumulative: a boolean specifying whether deaths occurring on days prior to timestep should be included. If cumulative is set to FALSE, only deaths on day "timestep" will be considered. If cumulative is set to TRUE, deaths up to and including day "timestep" will be added up (DEFAULT: TRUE)
 
-# @return: the list as described above
+#' @return: the list as described above
 #----
 
 entropy_procedure <- function(original_data,
@@ -493,23 +523,23 @@ Now, we implement a generalized function to bootstrap over our entropy_procedure
 
 ```{r define manual_boot_modified}
 #----
-# Documentation: manual_boot_modified
-# Usage: manual_boot_modified(data, subset, N, max_ts, cumulative)
-# @description: Returns a list containing six matrices formatted with dates as columns and resamples as rows. In order, the matrices contain: 
-# the sum of all cases (sum_mat), 
-# Shannon entropy of the PDF (shannonPDF_mat), 
-# Shannon entropy of the quantile function (shannonQuantile_mat), 
-# KL divergence of the PDF from a Gaussian distribution (negentPDF_mat), 
-# KL divergence of the PDF from a uniform distribution (uniformKL_PDF_mat),
-# and KL divergence of the quantile function from a uniform distribution (uniformKL_Quantile_mat)
-# calculated on mortality data in a specified subset of parishes on or up to a particular day.
+#' Documentation: manual_boot_modified
+#' Usage: manual_boot_modified(data, subset, N, max_ts, cumulative)
+#' @description: Returns a list containing six matrices formatted with dates as columns and resamples as rows. In order, the matrices contain: 
+#' the sum of all cases (sum_mat), 
+#' Shannon entropy of the PDF (shannonPDF_mat), 
+#' Shannon entropy of the quantile function (shannonQuantile_mat), 
+#' KL divergence of the PDF from a Gaussian distribution (negentPDF_mat), 
+#' KL divergence of the PDF from a uniform distribution (uniformKL_PDF_mat),
+#' and KL divergence of the quantile function from a uniform distribution (uniformKL_Quantile_mat)
+#' calculated on mortality data in a specified subset of parishes on or up to a particular day.
 
-# Arguments/Options:
-# @param data: a dataframe containing one variable for every parish of interest. Note that data does NOT get modified by the parameter "subset", so data must already be subsetted if one only wishes to include a smaller selection of parishes.
-# @param subset: a vector containing the indices of the parishes of interest in colnames(filled_modified).
-# @param N: an integer denoting the number of resamples to perform.
-# @param max_ts: an integer corresponding to the final day for which the aforementioned statistics should be calculated.
-# @param cumulative: a boolean specifying whether deaths occurring on days prior to timestep should be included. If cumulative is set to FALSE, the aforementioned calculations for a given day will only consider the deaths on that given day. If cumulative is set to TRUE, deaths up to and including that day will be summed.
+#' Arguments/Options:
+#' @param data: a dataframe containing one variable for every parish of interest. Note that data does NOT get modified by the parameter "subset", so data must already be subsetted if one only wishes to include a smaller selection of parishes.
+#' @param subset: a vector containing the indices of the parishes of interest in colnames(filled_modified).
+#' @param N: an integer denoting the number of resamples to perform.
+#' @param max_ts: an integer corresponding to the final day for which the aforementioned statistics should be calculated.
+#' @param cumulative: a boolean specifying whether deaths occurring on days prior to timestep should be included. If cumulative is set to FALSE, the aforementioned calculations for a given day will only consider the deaths on that given day. If cumulative is set to TRUE, deaths up to and including that day will be summed.
 
 # @return: the list as described above
 #----
@@ -529,7 +559,7 @@ manual_boot_modified <-
       # Iterate across every day in the 3 year period
       for (t in 1:max_ts) {
         current_list <-
-          entropy_procedure(original_data, subset, sample_index,
+          entropy_procedure(data, subset, sample_index,
                                       t, cumulative)
         sum_mat[i, t] <- current_list$sum
         shannonPDF_mat[i, t] <- current_list$shannonPDF
@@ -559,15 +589,15 @@ Instead of finding the 97.5th and 2.5th percentile full runs, we find the 97.5th
 
 ```{r define find_closest_run}
 #----
-# Documentation: find_closest_run
-# Usage: find_closest_run(all_runs, target_percentile)
-# @description: Returns in vector form the row of a specified dataframe with the nth lowest sum (n = target_percentile)
+#' Documentation: find_closest_run
+#' Usage: find_closest_run(all_runs, target_percentile)
+#' @description: Returns in vector form the row of a specified dataframe with the nth lowest sum (n = target_percentile)
 
-# Arguments/Options: 
-# @param all_runs: a dataframe containing numeric values with one column for every time point and one row for every resampling
-# @param target_percentile: an integer describing the index of the desired sorted vector all_runs. For example, if all_runs contains 1000 rows, the 97.5th percentile row selected by setting target_percentile = 975)
+#' Arguments/Options: 
+#' @param all_runs: a dataframe containing numeric values with one column for every time point and one row for every resampling
+#' @param target_percentile: an integer describing the index of the desired sorted vector all_runs. For example, if all_runs contains 1000 rows, the 97.5th percentile row selected by setting target_percentile = 975)
 
-# @return: the numeric vector as described above
+#' @return: the numeric vector as described above
 #----
 
 find_closest_run <- function(all_runs, target_percentile) {
@@ -584,14 +614,14 @@ Now, we define the analysis and bootstrapping functions for the per-sestiere ana
 
 ```{r define_sestiere_bootstrapping}
 #----
-# Documentation: shannonBySestiere
-# Usage: shannonBySestiere(cumulative)
-# @description: Returns a list of 6 lists (one for each sestiere). Each list contains six numerical vectors (one for each statistic) with entries for every day in the epidemic. 
+#' Documentation: shannonBySestiere
+#' Usage: shannonBySestiere(cumulative)
+#' @description: Returns a list of 6 lists (one for each sestiere). Each list contains six numerical vectors (one for each statistic) with entries for every day in the epidemic. 
 
-# Arguments/Options:
-# @param cumulative: a boolean specifying whether deaths occurring on days prior to timestep should be included. If cumulative is set to FALSE, the aforementioned calculations for a given day will only consider the deaths on that given day. If cumulative is set to TRUE, deaths up to and including that day will be summed (DEFAULT: TRUE)
+#' Arguments/Options:
+#' @param cumulative: a boolean specifying whether deaths occurring on days prior to timestep should be included. If cumulative is set to FALSE, the aforementioned calculations for a given day will only consider the deaths on that given day. If cumulative is set to TRUE, deaths up to and including that day will be summed (DEFAULT: TRUE)
 
-# @return: the list as described above
+#' @return: the list as described above
 #----
 shannonBySestiere <- function(cumulative = TRUE) {
   # Initialize vectors
@@ -645,19 +675,19 @@ shannonBySestiere <- function(cumulative = TRUE) {
 }
 
 #----
-# Documentation: shannonBySestiere_Bootstrapped
-# Usage: shannonBySestiere_Bootstrapped(cumulative)
-# @description: Returns a list containing 6 lists (one for each sestiere), each containing 5 matrices formatted with each statistic as a column and each day as a row. In order, the matrices contain: 
-# the 5th percentile value of each statistic calculated separately on each day (b1), 
-# the 95th percentile value of each statistic calculated separately on each day (b2), 
-# the value of the 5th percentile resample for each statistic (closest_runs_025), 
-# the value of the 5th percentile resample for each statistic (closest_runs_975), 
-# calculated on mortality data in each sestiere on or up to a particular day.
+#' Documentation: shannonBySestiere_Bootstrapped
+#' Usage: shannonBySestiere_Bootstrapped(cumulative)
+#' @description: Returns a list containing 6 lists (one for each sestiere), each containing 5 matrices formatted with each statistic as a column and each day as a row. In order, the matrices contain: 
+#' the 5th percentile value of each statistic calculated separately on each day (b1), 
+#' the 95th percentile value of each statistic calculated separately on each day (b2), 
+#' the value of the 5th percentile resample for each statistic (closest_runs_025), 
+#' the value of the 5th percentile resample for each statistic (closest_runs_975), 
+#' calculated on mortality data in each sestiere on or up to a particular day.
 
-# Arguments/Options:
-# @param cumulative: a boolean specifying whether deaths occurring on days prior to timestep should be included. If cumulative is set to FALSE, the aforementioned calculations for a given day will only consider the deaths on that given day. If cumulative is set to TRUE, deaths up to and including that day will be summed (DEFAULT: TRUE)
+#' Arguments/Options:
+#' @param cumulative: a boolean specifying whether deaths occurring on days prior to timestep should be included. If cumulative is set to FALSE, the aforementioned calculations for a given day will only consider the deaths on that given day. If cumulative is set to TRUE, deaths up to and including that day will be summed (DEFAULT: TRUE)
 
-# @return: the list as described above
+#' @return: the list as described above
 #----
 
 shannonBySestiere_Bootstrapped <- function(cumulative = TRUE) {
@@ -717,14 +747,14 @@ Finally, we define the functions for the bootstrapping of the whole dataset.
 
 ```{r define_whole_dataset_analysis}
 #----
-# Documentation: whole_dataset_analysis
-# Usage: whole_dataset_analysis(cumulative)
-# @description: Returns a list of 6 vectors, each containing the value of a particular statistic for every day in the epidemic.
+#' Documentation: whole_dataset_analysis
+#' Usage: whole_dataset_analysis(cumulative)
+#' @description: Returns a list of 6 vectors, each containing the value of a particular statistic for every day in the epidemic.
 
-# Arguments/Options:
-# @param cumulative: a boolean specifying whether deaths occurring on days prior to timestep should be included. If cumulative is set to FALSE, the aforementioned calculations for a given day will only consider the deaths on that given day. If cumulative is set to TRUE, deaths up to and including that day will be summed (DEFAULT: TRUE)
+#' Arguments/Options:
+#' @param cumulative: a boolean specifying whether deaths occurring on days prior to timestep should be included. If cumulative is set to FALSE, the aforementioned calculations for a given day will only consider the deaths on that given day. If cumulative is set to TRUE, deaths up to and including that day will be summed (DEFAULT: TRUE)
 
-# @return: the list as described above
+#' @return: the list as described above
 #----
 whole_dataset_analysis <- function(cumulative = TRUE){
   # Initialize the vectors for each statistic
@@ -754,14 +784,14 @@ whole_dataset_analysis <- function(cumulative = TRUE){
 }
 
 #----
-# Documentation: whole_dataset_bootstrap
-# Usage: whole_dataset_bootstrap(cumulative)
-# @description: Returns a list of 4 lists. Lists b1 and b2 correspond to the 2.5th and 97.5th percentile values at every time step, respectively, while lists closest_run_025 and closest_runs_975 correspond to the values of the 2.5th and 97.5th percentile trials, respectively. 
+#' Documentation: whole_dataset_bootstrap
+#' Usage: whole_dataset_bootstrap(cumulative)
+#' @description: Returns a list of 4 lists. Lists b1 and b2 correspond to the 2.5th and 97.5th percentile values at every time step, respectively, while lists closest_run_025 and closest_runs_975 correspond to the values of the 2.5th and 97.5th percentile trials, respectively. 
 
-# Arguments/Options:
-# @param cumulative: a boolean specifying whether deaths occurring on days prior to timestep should be included. If cumulative is set to FALSE, the aforementioned calculations for a given day will only consider the deaths on that given day. If cumulative is set to TRUE, deaths up to and including that day will be summed (DEFAULT: TRUE)
+#' Arguments/Options:
+#' @param cumulative: a boolean specifying whether deaths occurring on days prior to timestep should be included. If cumulative is set to FALSE, the aforementioned calculations for a given day will only consider the deaths on that given day. If cumulative is set to TRUE, deaths up to and including that day will be summed (DEFAULT: TRUE)
 
-# @return: the list as described above
+#' @return: the list as described above
 #----
 whole_dataset_bootstrap <- function(cumulative = TRUE){
   num_dates <- length(filled_modified$Date)
@@ -1757,6 +1787,7 @@ library("ggplot2")
 library(reshape2)
 library(dplyr)
 library(lubridate)
+library(stringi)
 ```
 
 #### Load shap file for map skeleton
@@ -1777,6 +1808,9 @@ original_deaths <- read.csv('~/VenetianPlague_Entropy/ALL_utf.csv')
 # mind that NA have to be set to 0, ...
 # otherwise the aggregrated sum will be reduced to NA!, but...
 original_deaths[is.na(original_deaths)] <- 0 # cleaning NAs >> we'll set them back later to NA (***)
+
+# remove diacritics
+colnames(original_deaths) <- stri_trans_general(colnames(original_deaths), id = "Latin-ASCII")
 
 # fix dates
 original_deaths$Date <- as.POSIXct(original_deaths$Date,format = '%m/%d/%Y')
@@ -1850,6 +1884,8 @@ fix col names to match names in shapes:
 ```{r choropleth merge deaths data into shape object, eval = FALSE}
 #replace spaces with dots 
 shap@data$NAME <- sapply(shap@data$NAME, function(x) gsub('\\s','.',x))
+# Remove diacritics
+shap@data$NAME <- stri_trans_general(shap@data$NAME, id = "Latin-ASCII")
 ```
 
 fix col names to match names in dataset summed >> over all time-window <<
@@ -1982,11 +2018,36 @@ Import population data and convert to mortality data
 ```{r choropleth import population data, eval = FALSE}
 population_pre <- read.csv("~/VenetianPlague_Entropy/ParishPopulationsPre.csv")
 population_post <- read.csv("~/VenetianPlague_Entropy/ParishPopulationsPost.csv")
+population <- read.csv("ParishPopulations.csv")
+filled <- read.csv("~/VenetianPlague_Entropy/filledna_full_ts.csv")
+
+# Fix the Dates on filled
+colnames(filled)[1] <- "Date"
+filled$Date <- as.Date(filled$Date, format = "%Y-%m-%d")
+
+# Fix the parish name artifacts in filled (import_csv replaces spaces with periods)
+colnames(filled) <- sub("^S\\.", "S", colnames(filled))
+
+# Remove diacritics
+colnames(filled) <- stri_trans_general(colnames(filled), id = "Latin-ASCII")
+
+# Convert mortality data in filled into integer types
+for(column in 1:ncol(filled)){
+  if(column == 1){
+    next
+  }
+  if(!(is.integer(filled[, column]))){
+    filled[, column] = as.integer(filled[,column])
+  }
+}
 
 colnames(population_pre) <- c("Parish", "Population_1509", "Population_1551", "Population_1581", "Population_1586")
 
 population_pre$Parish <- gsub("[[:space:]]",".",population_pre$Parish)
+population_pre$Parish <- stri_trans_general(population_pre$Parish, id = "Latin-ASCII")
+
 population_post$Parish <- gsub("[[:space:]]",".",population_post$Parish)
+population_post$Parish <- stri_trans_general(population_post$Parish, id = "Latin-ASCII")
 
 non_NAs <- c()
 for(i in 1:length(shap@data$NAME)){
@@ -2001,7 +2062,7 @@ for(i in 1:length(shap@data$NAME[non_NAs])){
   }
 }
 
-population_pre$Parish <- gsub("S..Giacomo.dell.Orio","S..Giacomo.dell'Orio",population_pre$Parish)
+population_pre$Parish <- gsub("S..Giacomo.dell.Orio","S..Giacomo.dell\'Orio",population_pre$Parish)
 
 for(i in 1:length(shap@data$NAME[non_NAs])){
   if(!shap@data$NAME[non_NAs][i] %in% population_post$Parish){
@@ -2642,48 +2703,45 @@ normal_approx <- function (x, K = ceiling(log2(length(x))) + 1){
   }
   y <- dnorm(bins2, mean = mean(x), sd = sd(x))
   y <- y / sum(y)
-  plot(x = bins2, y = y)
   y_2 <- diff(pnorm(bins, mean(x), sd(x)))
-  plot(bins2, y_2)
-  print(y_2 - y)
-  print(mean(x) - sum(bins2 * y))
-  print(mean(x) - sum(bins2 * y_2))
-  print(sum(y_2))
   return(y)
   #return(log(2 * pi * exp(1)*sigma2)*1/2 + sum(p * log(p)))
 }
 
-for(i in 1:10){
-  case_vector_2 <- colSums(filled_modified[1:i,-1])/(population_specified_modified$Population * 1000)
-  p <- normal_approx(case_vector_2)
-}
+shannon_PDF_vec <- rep(NA_real_, nrow(filled_modified))
+max_entropy_vec <- rep(NA_real_, nrow(filled_modified))
+max_differential_entropy_vec <- rep(NA_real_, nrow(filled_modified))
+case_df <- as.data.frame(matrix(data = NA, nrow = nrow(filled_modified), ncol = ncol(filled_modified[,-1])))
 
-#shannon_PDF_vec <- rep(0, nrow(filled_modified))
-#case_df <- as.data.frame(matrix(data = NA, nrow = nrow(filled_modified), ncol = ncol(filled_modified[,-1])))
-#for(i in 1:nrow(filled_modified)){
-#  case_vector_2 <- colSums(filled_modified[1:i,-1])/(population_specified_modified$Population * 1000)
-#  case_df[i,] <- case_vector_2
-#  p <- normal_approx(case_vector_2)
-#  max_entropy <- -1 * sum(p*log(p))
-#  #kern <- as.numeric(PDF_approx(case_vector_2))
-#  kern <- as.numeric(hist(case_vector_2, breaks = seq(min(case_vector_2), max(case_vector_2), length.out = 8), plot = FALSE)$density)
-#  kern <- kern/sum(kern)
-#  kern_norm <- kern / sum(kern)
-#  shannon_PDF <- -1 * sum(kern[kern != 0] * log(kern[kern != 0]))
-#  max_entropy_vec[i] <- max_entropy
-#  shannon_PDF_vec[i] <- shannon_PDF
-#}
+for(i in 1:nrow(filled_modified)){
+  case_vector_2 <- colSums(filled_modified[1:i,-1])/(population_specified_modified$Population * 1000)
+  case_df[i,] <- case_vector_2
+  p <- normal_approx(case_vector_2)
+  max_entropy <- -1 * sum(p*log(p))
+  max_differential_entropy <- log(sd(case_vector_2) * sqrt(2 * pi * exp(1))) #Differential Entropy
+  kern <- as.numeric(PDF_approx(case_vector_2))
+  kern <- kern/sum(kern)
+  kern_norm <- kern / sum(kern)
+  shannon_PDF <- -1 * sum(kern[kern != 0] * log(kern[kern != 0]))
+  
+  shannon_PDF_vec[i] <- shannon_PDF
+  max_entropy_vec[i] <- max_entropy
+  max_differential_entropy_vec[i] <- max_differential_entropy
+}
 ```
 
 Now, we plot:
+
 1. the entropy of the resulting PDF (black) against that of the normal distribution with the same mean and variance (red) for every day in the epidemic
 2. the negentropy of the PDF, calculated as entropy of the normal distribution - entropy of the PDF
 
-```{r plot PDF vs normal Sturges rule, eval = FALSE}
-plot_df <- as.data.frame(cbind(shannon_PDF_vec, max_entropy_vec, filled$Date))
+```{r plot PDF vs normal Sturges rule}
+plot_df <- as.data.frame(cbind(shannon_PDF_vec, max_entropy_vec, max_differential_entropy_vec, filled$Date))
+colnames(plot_df) <- 
 plot1 <- ggplot(data = plot_df, aes(x = filled$Date, y = shannon_PDF_vec)) +
   geom_line() +
   geom_line(aes(x = filled$Date, y = max_entropy_vec), col = "red") +
+  geom_line(aes(x = filled$Date, y = max_differential_entropy_vec), col = "blue") +
   scale_x_date(date_breaks = "12 months", date_labels = "%m-%Y") +
   theme_bw() +
   theme(
@@ -2742,7 +2800,7 @@ plot_grid(title,
 
 Here, we implement the Freedman-Diaconis rule to determine our bin width. The Freedman-Diaconis rule states that $\text{Bin width} = 2 \cdot \frac{\text{IQR}(x)}{\sqrt[3]{x}}$. 
 
-```{r find PDF max entropy using freedman diaconis, eval = FALSE}
+```{r find PDF max entropy using freedman diaconis}
 freedman_diaconis <- function (x){
   bin_width = 2 * IQR(x) * (length(x))^(-1/3)
   num_bins = ceiling((max(x) - min(x))/bin_width)
@@ -2750,6 +2808,7 @@ freedman_diaconis <- function (x){
 }
 
 max_entropy_vec <- rep(NA_real_, nrow(filled_modified))
+max_differential_entropy_vec <- rep(NA_real_, nrow(filled_modified))
 shannon_PDF_vec <- rep(NA_real_, nrow(filled_modified))
 
 # Exclude the first day since the high prevalence of zeroes results in 
@@ -2758,6 +2817,7 @@ for(i in 2:nrow(filled_modified)){
   num_bins <- as.numeric(freedman_diaconis(case_vector_2))
   p <- normal_approx(case_vector_2, K = num_bins)
   max_entropy <- -1 * sum(p*log(p))
+  max_differential_entropy <- log(sd(case_vector_2) * sqrt(2 * pi * exp(1))) #Differential Entropy
   kern <- as.numeric(hist(case_vector_2, breaks = seq(min(case_vector_2), max(case_vector_2), length.out = num_bins + 1), plot = FALSE)$density)
   kern <- kern/sum(kern)
   #if(i %% 100 == 0){
@@ -2769,6 +2829,7 @@ for(i in 2:nrow(filled_modified)){
   shannon_PDF <- -1 * sum(kern[kern != 0] * log(kern[kern != 0]))
   
   max_entropy_vec[i] <- max_entropy
+  max_differential_entorpy_vec[i] <- max_differential_entropy
   shannon_PDF_vec[i] <- shannon_PDF
 }
 
@@ -2776,11 +2837,12 @@ for(i in 2:nrow(filled_modified)){
 
 Now, we plot the entropy of the resulting PDF (black) against that of the normal distribution with the same mean and variance (red) for every day in the epidemic.
 
-```{r plot PDF vs normal Freedman-Diaconis, eval = FALSE}
-plot_df<- as.data.frame(cbind(shannon_PDF_vec, max_entropy_vec, filled$Date))
+```{r plot PDF vs normal Freedman-Diaconis}
+plot_df <- as.data.frame(cbind(shannon_PDF_vec, max_entropy_vec, max_differential_entropy_vec, filled$Date))
 plot1 <- ggplot(data = plot_df, aes(x = filled$Date, y = shannon_PDF_vec)) +
   geom_line() +
   geom_line(aes(x = filled$Date, y = max_entropy_vec), col = "red") +
+  geom_line(aes(x = filled$Date, y = max_differential_entropy_vec), col = "blue") +
   scale_x_date(date_breaks = "12 months", date_labels = "%m-%Y") +
   theme_bw() +
   theme(
