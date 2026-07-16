@@ -225,8 +225,18 @@ population_pre <- population_pre %>% arrange(Parish)
 # Remove the 1509 census data because the vast majority of values are NAs
 population_pre <- population_pre[,-2]
 
-# population_pre dataset is in thousands of people, so multiply by a thousand
-# to get the population
+# In the population_pre dataset, the thousands place is marked by a period. 
+# Unfortunately, R interprets these as decimal points. Because parishes with 
+# populations smaller than 1000 are unaffected by this, we use the format
+# function with 3 decimal places to exclude parishes with populations smaller than 1000.
+# Specifically, these parishes all have populations with 3 digits, so adding
+# the decimal point and three zeroes will result in their population numbers
+# having 7 characters.
+# All of the population numbers greater than 1000 are also less than 100,000, 
+# so the 7 character rule never accidentally excludes the wrong parishes.
+# Additionally, using the format function with three decimal places ensures that
+# trailing zeroes are accounted for.
+# Thus, we only scale the numbers that have less than 7 characters.
 
 for(j in 1:ncol(population_pre)){
   if(j == 1){
@@ -234,11 +244,6 @@ for(j in 1:ncol(population_pre)){
   }
   for(i in 1:nrow(population_pre)){
     population_pre[i,j] <- format(as.numeric(population_pre[i,j]), nsmall = 3)
-    
-    # Some parishes already have their population multiplied by a thousand, and
-    # those parishes will have population numbers with 7 or more characters
-    # because we include 3 decimal places in our call of the format function.
-    # Thus, we only scale the numbers that have less than 7 characters.
     
     if(nchar(population_pre[i,j]) < 7){ 
       population_pre[i,j] <- as.numeric(population_pre[i,j]) * 1000
@@ -316,8 +321,7 @@ interpolated_1629 <- as.numeric(population_df$Population_1586) + (43 / 110) * (p
 
 # Population-wide interpolation using linear regression results
 # 1629 - 1586 = 43, 1696 - 1586 = 110, so to interpolate we multiply by 43/110
-#interpolated_1629 <- (intercept - (1-slope) * population_pre$Population_1586) * 
-#  43/110 + population_pre$Population_1586
+#interpolated_1629 <- (intercept - (1-slope) * population_pre$Population_1586) * 43/110 + population_pre$Population_1586
 ```
 
 Create population_specified, a dataframe containing only the populations of the parishes of interest.
@@ -408,6 +412,8 @@ PDF_approx <- function(x, K = ceiling(log2(length(x))) + 1) {
 
 To calculate Kullback-Leibler divergence between two discrete probability distributions P(x) and Q(x), we use the definition $\sum_{x \in \mathcal{X}} P(x) \log \frac{P(x)}{Q(x)}$. While this formulation implies that KL divergence is undefined when $P(x) = Q(x) = 0$, we [consider the contribution of the KL divergence at that point to be zero](https://en.wikipedia.org/wiki/Kullback%E2%80%93Leibler_divergence#Definition).
 
+To see how this function compares with other methods of calculating Kullback-Leibler Divergence, see [this section](#compare-negentropy-calculations).
+
 ```{r define_KL}
 #Next, we define Kullback-Leibler divergence between two discrete probability distributions (x and y), formatted as vectors. We add a small value epsilon to avoid dividing by zero.
 KL_new <- function(x, y, epsilon = 1e-05){
@@ -430,10 +436,63 @@ KL_new <- function(x, y, epsilon = 1e-05){
   }
   return(distance)
 }
-  
 ```
 
-For a discrete probability distribution $P(x)$ taking values in the set $\mathcal{X}$, we define the Shannon entropy $H$ to be $H = -\sum_{x \in \mathcal{X}} P(x) \ln P(x)$.
+For a discrete probability distribution $P(x)$ taking values in the set $\mathcal{X}$, we define the Shannon entropy $H$ to be $H = -\sum_{x \in \mathcal{X}} P(x) \ln P(x)$. This definition is implemented directly in the main analysis function. 
+
+## Find the Entropy of the Gaussian Distribution with Identical Mean and Variance to the Data
+```{r find normal distribution entropy}
+#----
+#' Documentation: normal_approx
+#' Usage: normal_approx(x, K)
+#' @description: Takes in a vector of mortality at a given time point and generates a histogram approximation of a Gaussian distribution with identical mean and variance to the data using midpoint density estimation
+
+#' Arguments/Options:
+#' @param x: a vector containing the mortality rates of each parish at a specific point in time
+#' @param K: the number of bins to use (DEFAULT: ceiling(log2(length(x))) + 1), Sturges' Rule)
+
+#' @return: a vector of length K containing the densities in each bin of the normal distribution as described above
+#----
+
+normal_approx <- function (x, K = ceiling(log2(length(x))) + 1){
+  bins <- seq(min(x), max(x), length.out = K + 1)
+  bins2 <- rep(0, K)
+  for(i in 1:K){
+    bins2[i] <- (bins[i] + bins[i + 1]) / 2
+  }
+  y <- dnorm(bins2, mean = mean(x), sd = sd(x)) # Midpoint density estimation
+  y <- y / sum(y)
+  return(y)
+}
+
+#----
+#' Documentation: calculate_normal_entropy
+#' Usage: calculate_normal_entropy(death_data, population_data, cumulative)
+#' @description: Takes in death and population data and outputs a vector containing the entropy of the histogram-approximated normal distribution (using Sturges' Rule) with the same mean and variance as the data on each day.
+
+#' Arguments/Options:
+#' @param death_data: a dataframe containing parishes as columns, days as rows, and death counts as entries. The first column is excluded (typically because it contains date data).
+#' @param population_data: 
+#' @param cumulative: a boolean specifying whether all deaths up to each time point are included (TRUE) or if only the deaths on that day are included (FALSE). (DEFAULT: TRUE)
+
+#' @return: a vector of length nrow(death_data) containing the entropy of the histrogram-approximated normal distribution with the same mean and variance as the data on each day in the epidemic.
+#----
+
+calculate_normal_entropy <- function(death_data, population_data, cumulative = TRUE){
+  max_entropy_vec <- rep(NA_real_, nrow(death_data))
+  for(i in 1:nrow(death_data)){
+    if(cumulative){
+      case_vector <- colSums(death_data[1:i,-1]) / (population_data$Population * 1000)
+    } else {
+      case_vector <- as.numeric(death_data[i, -1]) / (population_data$Population * 1000)
+    }
+    p <- normal_approx(case_vector)
+    max_entropy <- -1 * sum(p * log(p))
+    max_entropy_vec[i] <- max_entropy
+  }
+  return(max_entropy_vec)
+}
+```
 
 ## Define Main Analaysis Function
 
@@ -486,8 +545,7 @@ entropy_procedure <- function(original_data,
     # Kernel (kern): histogram of mortality with # bins specified by Sturges's Rule
     kern <- as.numeric(PDF_approx(cv))
     
-    # Normalized kernel (kern_norm): PMF
-    kern_norm <- kern / sum(kern)
+    kern <- kern / sum(kern)
     
     shannon_PDF <- -1 * sum(kern[kern != 0] * log(kern[kern != 0]))
     shannon_quantile <-
@@ -585,7 +643,7 @@ manual_boot_modified <-
 
 ## Identify 95% CI
 
-Instead of finding the 97.5th and 2.5th percentile full runs, we find the 97.5th and 2.5th percentile values at each time point.
+In our main analysis, we find the 97.5th and 2.5th percentile values at each time point (accomplished by simply sorting for each day and indexing for the desired percentile, a task which is already performed in the bootstrapping functions themselves). However, as a sensitivity analysis, we define a function here which sums up the values across each run and approximates the 97.5th and 2.5th percentile full runs. 
 
 ```{r define find_closest_run}
 #----
@@ -845,6 +903,15 @@ stats_of_whole_boot_instantaneous_50_2 <- whole_dataset_bootstrap(cumulative = F
 # saveRDS(stats_of_whole_boot_instantaneous_50_2,"stats_of_whole_boot_instantaneous_50_2.rds")
 ```
 
+## Evaluate Gaussian Distribution Entropy
+
+Evaluate the entropy of the Gaussian distribution with the same mean and variance as the data for every day in the epidemic.
+
+```{r evaluate gaussian distribution entropy}
+normal_entropy_cumulative <- calculate_normal_entropy(filled_modified, population_specified_modified, cumulative = TRUE)
+normal_entropy_instantaneous <- calculate_normal_entropy(filled_modified, population_specified_modified, cumulative = FALSE)
+```
+
 # Results
 
 Now, we record our results. In this section, we focus on printing specific values of interest.
@@ -908,7 +975,7 @@ stats_of_whole_cumulative_50_2$uniformKL_PDF[nrow(filled_modified)]
 stats_of_whole_boot_cumulative_50_2$b1[[5]][nrow(filled_modified)]
 stats_of_whole_boot_cumulative_50_2$b2[[5]][nrow(filled_modified)]
 
-# Same as previous, but using the "closest runs" methodology to find the 2.5th and 97.5th percentile values
+# Same as previous, but using the "closest runs" methodology to find the 2.5th and 97.5th percentile values (not included in main results)
 stats_of_whole_boot_cumulative_50_2$closest_runs_025[[5]][nrow(filled_modified)]
 stats_of_whole_boot_cumulative_50_2$closest_runs_975[[5]][nrow(filled_modified)]
 ```
@@ -1281,17 +1348,18 @@ plot_df <-
     cbind(
       stats_of_whole_boot_cumulative_50_2$b1[[2]],
       stats_of_whole_boot_cumulative_50_2$b2[[2]],
-      stats_of_whole_cumulative_50_2$shannonPDF
+      stats_of_whole_cumulative_50_2$shannonPDF,
+      normal_entropy_cumulative
     )
   )
-colnames(plot_df) <- c("b1", "b2", "observed")
+colnames(plot_df) <- c("b1", "b2", "observed", "maximum")
 
 plot1 <- ggplot(data = plot_df, aes(x = filled$Date, y = observed)) +
   geom_line() +
-  #geom_line(aes(y=rep(log(ceiling(log2(ncol(filled_modified[,-1])))+1),length(filled$Date))),linetype="dashed")+
-  geom_line(aes(y = rep(log(ceiling(
-    log2(ncol(filled_modified[, -1])) #ceiling(log2(N) + 1) is the number of bins under Sturges' Rule, but this should be the entropy of the Gaussian with the same mean and variance as the data on the final day
-  ) + 1), length(filled$Date))), col = "red") +
+  #geom_line(aes(y = rep(log(ceiling(
+  #  log2(ncol(filled_modified[, -1])) #ceiling(log2(N) + 1) is the number of bins under Sturges' Rule
+  #) + 1), length(filled$Date))), col = "red") +
+  geom_line(aes(y = maximum), col = "red") +
   geom_ribbon(aes(ymin = b1, ymax = b2), alpha = 0.5) +
   coord_cartesian(ylim = c(1, 2)) +
   # coord_cartesian(ylim=c(0,2))+ #S. Marco
@@ -1460,7 +1528,15 @@ plot2 <- ggplot(data = plot_df_2, aes(x = filled$Date, y = observed)) +
   ), length(filled$Date))), col = "red") +
   geom_ribbon(aes(ymin = b1, ymax = b2), alpha = 0.5) +
   scale_x_date(date_breaks = "12 months", date_labels = "%m-%Y") +
-  scale_y_continuous() +
+  scale_y_continuous(
+    name = "Entropy (nats)",
+    sec.axis = sec_axis( #create second y-axis for effective number of parishes
+      trans =  ~ .,
+      name = "Effective Number",
+      labels = function(x)
+        scales::comma(round(exp(x)), accuracy = 1)
+    )
+  ) +
   expand_limits(y = c(2, 4)) +
   theme_bw() +
   theme(
@@ -1529,10 +1605,11 @@ plot_df <-
     cbind(
       stats_of_whole_boot_instantaneous_50_2$b1[[2]],
       stats_of_whole_boot_instantaneous_50_2$b2[[2]],
-      stats_of_whole_instantaneous_50_2$shannonPDF
+      stats_of_whole_instantaneous_50_2$shannonPDF,
+      normal_entropy_instantaneous
     )
   )
-colnames(plot_df) <- c("b1", "b2", "observed")
+colnames(plot_df) <- c("b1", "b2", "observed", "maximum")
 
 plot1 <- ggplot(data = plot_df, aes(x = filled$Date, y = observed)) +
   geom_ribbon(aes(
@@ -1541,9 +1618,10 @@ plot1 <- ggplot(data = plot_df, aes(x = filled$Date, y = observed)) +
     ymax = b2
   ), alpha = 0.5) +
   geom_line(lwd = 0.25) +
-  geom_line(aes(y = rep(log(ceiling(
-    log2(ncol(filled_modified[, -1]))
-  ) + 1), length(filled$Date))), col = "red") +
+  #geom_line(aes(y = rep(log(ceiling(
+  #  log2(ncol(filled_modified[, -1]))
+  #) + 1), length(filled$Date))), col = "red") +
+  geom_line(aes(y = maximum), col = "red") +
   scale_x_date(date_breaks = "12 months", date_labels = "%m-%Y") +
   scale_y_continuous() +
   expand_limits(y = c(0, 2)) +
@@ -2049,6 +2127,37 @@ population_pre$Parish <- stri_trans_general(population_pre$Parish, id = "Latin-A
 population_post$Parish <- gsub("[[:space:]]",".",population_post$Parish)
 population_post$Parish <- stri_trans_general(population_post$Parish, id = "Latin-ASCII")
 
+# Identify and remove the parishes that are not contained in both the 
+# 1586 census and the 1696 census
+remove_vec <- c()
+for(i in 1:length(population_pre$Parish)){
+  if(!(population_pre$Parish[i] %in% population_post$Parish)){
+    remove_vec <- c(remove_vec,i)
+  }
+}
+
+if(length(remove_vec) > 0){
+  population_pre <- population_pre[-remove_vec,]
+}
+
+remove_vec <- c()
+for(i in 1:length(population_post$Parish)){
+  if(!(population_post$Parish[i] %in% population_pre$Parish)){
+    remove_vec <- c(remove_vec, i)
+  }
+}
+
+if(length(remove_vec) > 0){
+  population_post <- population_post[-remove_vec,]
+}
+
+# Establish a consistent ordering of the parishes (alphabetical)
+population_post <- population_post %>% arrange(Parish)
+population_pre <- population_pre %>% arrange(Parish)
+
+# Remove the 1509 census data because the vast majority of values are NAs
+population_pre <- population_pre[,-2]
+
 non_NAs <- c()
 for(i in 1:length(shap@data$NAME)){
   if(length(which(!is.na(shap@data[i,4:ncol(shap@data)]))) != 0){
@@ -2085,16 +2194,40 @@ for(j in 1:ncol(population_pre)){
   population_pre[,j] <- as.numeric(population_pre[,j])
 }
 
-interpolated_1629 <- as.data.frame(matrix(nrow=length(population_pre$Population_1586),ncol=2))
-colnames(interpolated_1629) <- c("Parish","Population")
-interpolated_1629$Parish <- population_pre$Parish
-interpolated_1629$Population <- (20.45589-(1-0.8990027)*population_pre$Population_1586)*43/110 + population_pre$Population_1586
+population_post$Population <- as.numeric(population_post$Population) * 1000
+
+# Merge population_pre and population_post into one dataframe, population_df
+population_df <- as.data.frame(cbind(population_pre, population_post[,-1]))
+colnames(population_df) <- c("Parish", "Population_1551", "Population_1581", 
+                             "Population_1586", "Population_1696")
+
+interpolated_1629 <- as.numeric(population_df$Population_1586) + (43 / 110) * (population_df$Population_1696 - population_df$Population_1586)
+
+population <- data.frame(population_post$Parish, interpolated_1629 / 1000)
+colnames(population) <- c("Parish","Population")
+population_specified <- population[population$Parish %in% colnames(filled[,-1]),]
+population_specified <- population_specified[match(colnames(filled[,-1]), population_specified$Parish),]
+
+# Organize shap@data by NAME (parish name) and remove the parishes not in filled
+
+#shap@data %>% arrange(NAME)
+
+#remove_vec <- c()
+#for(i in 1:length(shap@data$NAME)){
+#  if(!(shap@data$NAME[i] %in% population_specified$Parish)){
+#    remove_vec <- c(remove_vec,i)
+#  }
+#}
+
+#if(length(remove_vec) > 0){
+#  shap@data <- shap@data[-remove_vec,]
+#}
 
 for(i in 1:nrow(shap@data)){
-  if(shap@data$NAME[i] %in% interpolated_1629$Parish){
+  if(shap@data$NAME[i] %in% population_specified$Parish){
     # print(shap@data$NAME[i])
     # print(match(shap@data$NAME[i],interpolated_1629$Parish))
-    shap@data[i,3:(ncol(shap@data)-1)] <- shap@data[i,3:(ncol(shap@data)-1)]/interpolated_1629$Population[match(shap@data$NAME[i],interpolated_1629$Parish)]
+    shap@data[i,3:(ncol(shap@data)-1)] <- shap@data[i,3:(ncol(shap@data)-1)]/population_specified$Population[match(shap@data$NAME[i],population_specified$Parish)]
   }
 }
 ```
@@ -2158,7 +2291,7 @@ for(i in (4:(ncol(shap@data)-1))){
 # print(plot_list6)
 #save(plot_list6,file="plot_list6.RData")
 ```
-Save the plots for Figure 1 (would normally be uncommented)
+Save the choropleth plots for Figure 1 (would normally be uncommented)
 ```{r choropleth save plot, eval = FALSE}
 # CURRENT 7_8_26 (START OF UNCOMMENT SECTION)
 #plot_list7 <- list(plot1=pl[[1]],plot2=pl[[22]],plot3=pl[[36]])
@@ -2293,15 +2426,15 @@ PDF_approx_epanechnikov <- function (cv){
 }
 
 #----
-# Documentation: normal_approx
-# Usage: normal_approx(x, K)
-# @description: Takes in a vector of mortality at a given time point and generates a histogram approximation of a Gaussian distribution with identical mean and variance to the data
+#' Documentation: normal_approx
+#' Usage: normal_approx(x, K)
+#' @description: Takes in a vector of mortality at a given time point and generates a histogram approximation of a Gaussian distribution with identical mean and variance to the data
 
-# Arguments/Options:
-# @param x: a vector containing the mortality rates of each parish at a specific point in time
-# @param K: the number of bins to use (DEFAULT: ceiling(log2(length(x))) + 1), Sturges' Rule)
+#' Arguments/Options:
+#' @param x: a vector containing the mortality rates of each parish at a specific point in time
+#' @param K: the number of bins to use (DEFAULT: ceiling(log2(length(x))) + 1), Sturges' Rule)
 
-# @return: a vector of length K containing the densities in each bin of the normal distribution as described above
+#' @return: a vector of length K containing the densities in each bin of the normal distribution as described above
 #----
 normal_approx <- function (x, K = ceiling(log2(length(x))) + 1){
   bins <- seq(min(x), max(x), length.out = K + 1)
@@ -2312,7 +2445,6 @@ normal_approx <- function (x, K = ceiling(log2(length(x))) + 1){
   y <- dnorm(bins2, mean = mean(x), sd = sd(x))
   y <- y / sum(y)
   return(y)
-  #return(log(2 * pi * exp(1)*sigma2)*1/2 + sum(p * log(p)))
 }
 
 #months_vec <- c(12,24,34)
@@ -2686,6 +2818,10 @@ print(sum(mean_mortality) / length(mean_mortality))
 print(sd(mean_mortality))
 ```
 
+# Sensitivity Analyses
+
+In this section, we conduct several sensitivity analyses to address the extent to which the limitations of our methodology may have affected our results.
+
 ## Testing Binning Methods
 
 In this section, we compare the entropy of the PDF with that of the histogram-approximated normal distribution with identical mean and variance to the data. In particular, we make this comparison for three bin selection methods.
@@ -2694,7 +2830,7 @@ In this section, we compare the entropy of the PDF with that of the histogram-ap
 
 Here, we implement Sturges' Rule to determine the number of bins ($K = \lceil \log_2(n)\rceil + 1$). Since we have a consistent number of parishes ($n = 50$), Sturges' Rule will always result in a 7 bin histogram. 
 
-```{r find PDF max entropy sturges rule}
+```{r find PDF max entropy Sturges rule}
 normal_approx <- function (x, K = ceiling(log2(length(x))) + 1){
   bins <- seq(min(x), max(x), length.out = K + 1)
   bins2 <- rep(0, K)
@@ -2708,9 +2844,12 @@ normal_approx <- function (x, K = ceiling(log2(length(x))) + 1){
   #return(log(2 * pi * exp(1)*sigma2)*1/2 + sum(p * log(p)))
 }
 
-shannon_PDF_vec <- rep(NA_real_, nrow(filled_modified))
-max_entropy_vec <- rep(NA_real_, nrow(filled_modified))
+SR_shannon_PDF_vec <- rep(NA_real_, nrow(filled_modified))
+SR_max_entropy_vec <- rep(NA_real_, nrow(filled_modified))
 max_differential_entropy_vec <- rep(NA_real_, nrow(filled_modified))
+msos_negent_vec <- rep(NA_real_, nrow(filled_modified))
+KL_divergence_vec <- rep(NA_real_, nrow(filled_modified))
+KL_function_vec <- rep(NA_real_, nrow(filled_modified))
 case_df <- as.data.frame(matrix(data = NA, nrow = nrow(filled_modified), ncol = ncol(filled_modified[,-1])))
 
 for(i in 1:nrow(filled_modified)){
@@ -2721,12 +2860,19 @@ for(i in 1:nrow(filled_modified)){
   max_differential_entropy <- log(sd(case_vector_2) * sqrt(2 * pi * exp(1))) #Differential Entropy
   kern <- as.numeric(PDF_approx(case_vector_2))
   kern <- kern/sum(kern)
-  kern_norm <- kern / sum(kern)
+  
   shannon_PDF <- -1 * sum(kern[kern != 0] * log(kern[kern != 0]))
   
-  shannon_PDF_vec[i] <- shannon_PDF
-  max_entropy_vec[i] <- max_entropy
+  KL_divergence <- (-1 * shannon_PDF) - sum(kern[kern != 0] * log(p[kern != 0]))
+  
+  KL_function <- KL_new(kern, p)
+  
+  SR_shannon_PDF_vec[i] <- shannon_PDF
+  SR_max_entropy_vec[i] <- max_entropy
+  KL_divergence_vec[i] <- KL_divergence
+  KL_function_vec[i] <- KL_function
   max_differential_entropy_vec[i] <- max_differential_entropy
+  msos_negent_vec[i] <- negent(case_vector_2)
 }
 ```
 
@@ -2736,12 +2882,11 @@ Now, we plot:
 2. the negentropy of the PDF, calculated as entropy of the normal distribution - entropy of the PDF
 
 ```{r plot PDF vs normal Sturges rule}
-plot_df <- as.data.frame(cbind(shannon_PDF_vec, max_entropy_vec, max_differential_entropy_vec, filled$Date))
-colnames(plot_df) <- 
-plot1 <- ggplot(data = plot_df, aes(x = filled$Date, y = shannon_PDF_vec)) +
+SR_plot_df <- as.data.frame(cbind(SR_shannon_PDF_vec, SR_max_entropy_vec, max_differential_entropy_vec, msos_negent_vec, KL_function_vec, filled$Date))
+
+plot1 <- ggplot(data = SR_plot_df, aes(x = filled$Date, y = SR_shannon_PDF_vec)) +
   geom_line() +
-  geom_line(aes(x = filled$Date, y = max_entropy_vec), col = "red") +
-  geom_line(aes(x = filled$Date, y = max_differential_entropy_vec), col = "blue") +
+  geom_line(aes(x = filled$Date, y = SR_max_entropy_vec), col = "red") +
   scale_x_date(date_breaks = "12 months", date_labels = "%m-%Y") +
   theme_bw() +
   theme(
@@ -2754,9 +2899,10 @@ plot1 <- ggplot(data = plot_df, aes(x = filled$Date, y = shannon_PDF_vec)) +
   ) +
   labs(y = "Entropy (nats)", x = "Date", title = "Entropy")
 
-plot2 <- ggplot(data = plot_df, aes(x = filled$Date, y = max_entropy_vec - shannon_PDF_vec)) +
+plot2 <- ggplot(data = SR_plot_df, aes(x = filled$Date, y = SR_max_entropy_vec - SR_shannon_PDF_vec)) +
   geom_line() +
   geom_hline(yintercept = 0, color = "red") +
+  coord_cartesian(ylim = c(-0.05, 0.5)) +
   scale_x_date(date_breaks = "12 months", date_labels = "%m-%Y") +
   theme_bw() +
   theme(
@@ -2796,6 +2942,38 @@ plot_grid(title,
           rel_heights = c(0.1, 1))
 ```
 
+#### Compare Negentropy Calculations
+
+Compare multiple calculations for negentropy using Sturges' Rule:
+
+1. Black - Subtracting entropy of histogram-approximated normal by entropy of histogram-approximated PDF
+2. Blue - KL divergence of histogram-approximated PDF $P(x)$ from histogram-approximated normal $Q(x)$ using the calculation $-H(P(x)) + H(P(x), Q(x))$ where $H(P(x), Q(x))$ is the cross entropy, defined as $H(P(x), Q(x)) = -\sum_{x \in \mathcal{X}} p(x)\log q(x)$
+3. Orange - Negentropy estimates obtained from the msos package's negent function, which calculates negentropy as $h(Y_G)-H(Y)$ where $h(Y_G)$ is the differential entropy of the normal distribution with the same mean and variance as the data (defined as $\frac{1}{2} \log \left( 2 \pi e \cdot \sigma^2 \right)$) and $H(Y)$ is the entropy (not differential entropy) of the histogram-approximated PDF
+4. Pink - KL divergence of histogram-approximated PDF $P(x)$ from histogram-approximated normal $Q(x)$ using the KL_new function defined earlier in this notebook.
+
+```{r compare negentropy calculations}
+SR_plot_df %>% ggplot(aes(x = filled$Date, y = SR_max_entropy_vec - SR_shannon_PDF_vec)) +
+  geom_line() +
+  geom_hline(yintercept = 0, color = "red") +
+  geom_line(aes(x = filled$Date, y = KL_divergence_vec), color = "blue", alpha = 0.5) +
+  geom_line(aes(x = filled$Date, y = msos_negent_vec), color = "orange", alpha = 0.5) +
+  geom_line(aes(x = filled$Date, y = KL_function_vec), color = "pink", alpha = 0.5) + #nearly identical to KL_divergence_vec
+  coord_cartesian(ylim = c(-0.05, 0.5)) +
+  scale_x_date(date_breaks = "12 months", date_labels = "%m-%Y") +
+  theme_bw() +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.background = element_blank(),
+    plot.background = element_rect(fill = "white"),
+    axis.title = element_text(size = 10),
+    plot.title = element_text(size = 12)
+  ) +
+  labs(y = "Negentropy (nats)", x = "Date", title = "Negentropy")
+```
+
+All of these graphs appear to be vertical shifts of one another, confirming that they represent the same underlying statistic. For the purposes of consistency, we use the msos negent function.
+
 ### Freedman-Diaconis
 
 Here, we implement the Freedman-Diaconis rule to determine our bin width. The Freedman-Diaconis rule states that $\text{Bin width} = 2 \cdot \frac{\text{IQR}(x)}{\sqrt[3]{x}}$. 
@@ -2807,30 +2985,24 @@ freedman_diaconis <- function (x){
   return(num_bins)
 }
 
-max_entropy_vec <- rep(NA_real_, nrow(filled_modified))
-max_differential_entropy_vec <- rep(NA_real_, nrow(filled_modified))
-shannon_PDF_vec <- rep(NA_real_, nrow(filled_modified))
+FD_max_entropy_vec <- rep(NA_real_, nrow(filled_modified))
+FD_max_differential_entropy_vec <- rep(NA_real_, nrow(filled_modified))
+FD_shannon_PDF_vec <- rep(NA_real_, nrow(filled_modified))
 
-# Exclude the first day since the high prevalence of zeroes results in 
+# Exclude the first day since the high prevalence of zeroes results in undefined IQR
 for(i in 2:nrow(filled_modified)){
   case_vector_2 <- colSums(filled_modified[1:i,-1])/(population_specified_modified$Population * 1000)
   num_bins <- as.numeric(freedman_diaconis(case_vector_2))
   p <- normal_approx(case_vector_2, K = num_bins)
   max_entropy <- -1 * sum(p*log(p))
   max_differential_entropy <- log(sd(case_vector_2) * sqrt(2 * pi * exp(1))) #Differential Entropy
-  kern <- as.numeric(hist(case_vector_2, breaks = seq(min(case_vector_2), max(case_vector_2), length.out = num_bins + 1), plot = FALSE)$density)
+  kern <- as.numeric(PDF_approx(case_vector_2, K = num_bins))
   kern <- kern/sum(kern)
-  #if(i %% 100 == 0){
-   # hist(case_vector_2, breaks = num_bins)
-  #  print(hist(case_vector_2, breaks = num_bins, plot = FALSE)$density)
-  #}
-  #kern <- as.numeric(PDF_approx(case_vector_2, K = num_bins))
-  kern_norm <- kern / sum(kern)
   shannon_PDF <- -1 * sum(kern[kern != 0] * log(kern[kern != 0]))
   
-  max_entropy_vec[i] <- max_entropy
-  max_differential_entorpy_vec[i] <- max_differential_entropy
-  shannon_PDF_vec[i] <- shannon_PDF
+  FD_max_entropy_vec[i] <- max_entropy
+  FD_max_differential_entropy_vec[i] <- max_differential_entropy
+  FD_shannon_PDF_vec[i] <- shannon_PDF
 }
 
 ```
@@ -2838,11 +3010,10 @@ for(i in 2:nrow(filled_modified)){
 Now, we plot the entropy of the resulting PDF (black) against that of the normal distribution with the same mean and variance (red) for every day in the epidemic.
 
 ```{r plot PDF vs normal Freedman-Diaconis}
-plot_df <- as.data.frame(cbind(shannon_PDF_vec, max_entropy_vec, max_differential_entropy_vec, filled$Date))
-plot1 <- ggplot(data = plot_df, aes(x = filled$Date, y = shannon_PDF_vec)) +
+FD_plot_df <- as.data.frame(cbind(FD_shannon_PDF_vec, FD_max_entropy_vec, FD_max_differential_entropy_vec, filled$Date))
+plot1 <- ggplot(data = FD_plot_df, aes(x = filled$Date, y = FD_shannon_PDF_vec)) +
   geom_line() +
-  geom_line(aes(x = filled$Date, y = max_entropy_vec), col = "red") +
-  geom_line(aes(x = filled$Date, y = max_differential_entropy_vec), col = "blue") +
+  geom_line(aes(x = filled$Date, y = FD_max_entropy_vec), col = "red") +
   scale_x_date(date_breaks = "12 months", date_labels = "%m-%Y") +
   theme_bw() +
   theme(
@@ -2855,7 +3026,7 @@ plot1 <- ggplot(data = plot_df, aes(x = filled$Date, y = shannon_PDF_vec)) +
   ) +
   labs(y = "Entropy (nats)", x = "Date", title = "Entropy")
 
-plot2 <- ggplot(data = plot_df, aes(x = filled$Date, y = max_entropy_vec - shannon_PDF_vec)) +
+plot2 <- ggplot(data = FD_plot_df, aes(x = filled$Date, y = FD_max_entropy_vec - FD_shannon_PDF_vec)) +
   geom_line() +
   geom_hline(yintercept = 0, color = "red") +
   scale_x_date(date_breaks = "12 months", date_labels = "%m-%Y") +
@@ -2899,7 +3070,7 @@ plot_grid(title,
 
 ### Kernel-Density Estimation
 
-Finally, here we use Kernel-Density estimation with 512 bins. Note that because the total number of bins is substantially greater than the previous two methods, the magnitude of entropy will also be larger. 
+Finally, here we use Kernel-Density Estimation (KDE) with 512 bins. Note that because we are using KDE to approximate differential entropy, the entropy values may be negative. However, because these differential entropy estimates are being compared against the differential entropy of the normal distribution, the negentropy values should still be similar to those obtained from the other two binning methods. 
 
 ```{r kde entropy}
 kde_entropy <- function(x, n_points = 512) {
@@ -2930,24 +3101,24 @@ kde_entropy <- function(x, n_points = 512) {
   )
 }
 
-max_entropy_vec <- rep(0, nrow(filled_modified))
-shannon_PDF_vec <- rep(0, nrow(filled_modified))
+KDE_max_entropy_vec <- rep(0, nrow(filled_modified))
+KDE_shannon_PDF_vec <- rep(0, nrow(filled_modified))
 
 for (i in 1:nrow(filled_modified)) {
   case_vector_2 <- colSums(filled_modified[1:i, -1]) / (population_specified_modified$Population * 1000)
   kde_output_vec <- kde_entropy(case_vector_2)
-  shannon_PDF_vec[i] <- kde_output_vec[1]
-  max_entropy_vec[i] <- kde_output_vec[2]
+  KDE_shannon_PDF_vec[i] <- kde_output_vec[1]
+  KDE_max_entropy_vec[i] <- kde_output_vec[2]
 }
 ```
 
 Now, we plot the entropy of the resulting PDF (black) against that of the normal distribution with the same mean and variance (red) for every day in the epidemic.
 
 ```{r kde entropy plot}
-plot_df <- as.data.frame(cbind(shannon_PDF_vec, max_entropy_vec, filled$Date))
-plot1 <- ggplot(data = plot_df, aes(x = filled$Date, y = shannon_PDF_vec)) +
+KDE_plot_df <- as.data.frame(cbind(KDE_shannon_PDF_vec, KDE_max_entropy_vec, filled$Date))
+plot1 <- ggplot(data = KDE_plot_df, aes(x = filled$Date, y = KDE_shannon_PDF_vec)) +
   geom_line() +
-  geom_line(aes(x = filled$Date, y = max_entropy_vec), col = "red") +
+  geom_line(aes(x = filled$Date, y = KDE_max_entropy_vec), col = "red") +
   scale_x_date(date_breaks = "12 months", date_labels = "%m-%Y") +
   theme_bw() +
   theme(
@@ -2960,7 +3131,7 @@ plot1 <- ggplot(data = plot_df, aes(x = filled$Date, y = shannon_PDF_vec)) +
   ) +
   labs(y = "Entropy (nats)", x = "Date", title = "Entropy")
 
-plot2 <- ggplot(data = plot_df, aes(x = filled$Date, y = max_entropy_vec - shannon_PDF_vec)) +
+plot2 <- ggplot(data = KDE_plot_df, aes(x = filled$Date, y = KDE_max_entropy_vec - KDE_shannon_PDF_vec)) +
   geom_line() +
   geom_line(aes(x = filled$Date, y = rep(0, nrow(filled_modified))), col = "red") +
   scale_x_date(date_breaks = "12 months", date_labels = "%m-%Y") +
@@ -3004,131 +3175,120 @@ plot_grid(title,
 
 ### Binning Method Conclusions
 
-Note that regardless of the binning method used, negentropy starts low, increases until the primary outbreak, then drops and stays low for the rest of the epidemic.
+Binning method had a significant impact on the entropy values obtained. However, binning method had minimal impact on negentropy estimates; regardless of the method used, negentropy starts low, increases until the primary outbreak, then drops and stays low for the rest of the epidemic.
+
+Compare KL Divergence estimates from the three methods:
+
+1. Sturges' Rule (Black)
+2. Freedman-Diaconis Rule (Orange)
+3. KDE Approximation (Blue)
+
+```{r compare KL divergence estimates of binning methods}
+plot_df <- as.data.frame(cbind(KDE_shannon_PDF_vec, KDE_max_entropy_vec, FD_shannon_PDF_vec, FD_max_entropy_vec, SR_shannon_PDF_vec, SR_max_entropy_vec, filled$Date))
+plot_df %>% ggplot(aes(x = filled$Date, y = SR_max_entropy_vec - SR_shannon_PDF_vec)) +
+  geom_line() +
+  geom_line(aes(x = filled$Date, y = rep(0, nrow(filled_modified))), col = "red") +
+  geom_line(aes(x = filled$Date, y = FD_max_entropy_vec - FD_shannon_PDF_vec), col = "orange", alpha = 0.5) +
+  geom_line(aes(x = filled$Date, y = KDE_max_entropy_vec - KDE_shannon_PDF_vec), color = "blue", alpha = 0.5) +
+  scale_x_date(date_breaks = "12 months", date_labels = "%m-%Y") +
+  theme_bw() +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.background = element_blank(),
+    plot.background = element_rect(fill = "white"),
+    axis.title = element_text(size = 10),
+    plot.title = element_text(size = 12)
+  ) +
+  labs(y = "Negentropy (nats)", x = "Date", title = "Negentropy")
+```
 
 ## Dynamic Parish Populations
 
-In this section, we repeat our entropy calculations using dynamic parish populations; specifically, the population of a parish on day $d$ is represented as the population of that parish on January 1, 1629 minus the total deaths in that parish up to but not including day $d$. Ignoring births, the purpose of this analysis is to quantify the extent to which the assumption of fixed parish populations artifactually drives the distribution of cumulative mortality towards uniformity.
+In this section, we repeat our entropy calculations using dynamic parish populations; specifically, the population of a parish on day $d$ is represented as the population of that parish on January 1, 1629 minus the total deaths in that parish up to but not including day $d$. Ignoring births, the purpose of this analysis is to quantify the extent to which the assumption of fixed parish populations artifactually drives the distribution of cumulative mortality towards uniformity. We also test how the effect of this modification changes when we begin our analysis on January 1, 1629 vs. when we begin our analysis on the first day of the outbreak. 
 
-Non-dynamic populations (baseline).
-```{r non-dynamic parish populations}
-instantaneous_mortality_df <- as.data.frame(matrix(NA_real_, nrow = nrow(filled_modified), ncol = ncol(filled_modified) - 1))
-
-shannonPDF_vec <- rep(0, nrow(filled_modified))
-shannonQuantile_vec <- rep(0, nrow(filled_modified))
-negentPDF_vec <- rep(0, nrow(filled_modified))
-uniformKL_Quantile_vec <- rep(0, nrow(filled_modified))
-
-for(i in 1:nrow(filled_modified)){
-  instantaneous_cv <- filled_modified[i, -1] / (population_specified_modified$Population * 1000)
-  instantaneous_mortality_df[i, ] <- instantaneous_cv
-  
-  cumulative_cv <- colSums(instantaneous_mortality_df[1:i,])
-  cumulative_cv <- sort(cumulative_cv)
-    
-  # Normalized case vector (cumulative_cv_norm): quantile function
-  cumulative_cv_norm <- cumulative_cv / sum(cumulative_cv)
-  
-  kde_output_vec_2 <- kde_entropy(cumulative_cv)
-    
-  shannon_PDF <- kde_output_vec_2[1]
-  max_entropy_PDF <- kde_output_vec_2[2]
-  
-  shannon_quantile <- -1 * sum(cumulative_cv_norm[cumulative_cv_norm != 0] * log(cumulative_cv_norm[cumulative_cv_norm != 0]))
-    
-  negent_PDF <- max_entropy_PDF - shannon_PDF
-  
-  uniform_KL_quantile <- KL_new(cumulative_cv_norm, rep(1 / length(cumulative_cv_norm), length(cumulative_cv_norm)))
-
-  shannonPDF_vec[i] <- shannon_PDF
-  shannonQuantile_vec[i] <- shannon_quantile
-  negentPDF_vec[i] <- negent_PDF
-  uniformKL_Quantile_vec[i] <- uniform_KL_quantile
-}
-```
-
-Dynamic populations.
-```{r dynamic parish populations}
-population_specified_dynamic <- population_specified_modified
-instantaneous_dynamic_mortality_df <- as.data.frame(matrix(NA_real_, nrow = nrow(filled_modified), ncol = ncol(filled_modified) - 1))
-
-shannonPDF_dynamic_vec <- rep(0, nrow(filled_modified))
-shannonQuantile_dynamic_vec <- rep(0, nrow(filled_modified))
-negentPDF_dynamic_vec <- rep(0, nrow(filled_modified))
-uniformKL_Quantile_dynamic_vec <- rep(0, nrow(filled_modified))
-
-for(i in 1:nrow(filled_modified)){
-  instantaneous_cv <- filled_modified[i, -1] / (population_specified_dynamic$Population * 1000)
-  instantaneous_dynamic_mortality_df[i, ] <- instantaneous_cv
-  
-  cumulative_cv <- colSums(instantaneous_dynamic_mortality_df[1:i,])
-  cumulative_cv <- sort(cumulative_cv)
-    
-  # Normalized case vector (cumulative_cv_norm): quantile function
-  cumulative_cv_norm <- cumulative_cv / sum(cumulative_cv)
-  
-  kde_output_vec_2 <- kde_entropy(cumulative_cv)
-    
-  shannon_PDF <- kde_output_vec_2[1]
-  max_entropy_PDF <- kde_output_vec_2[2]
-  
-  shannon_quantile <- -1 * sum(cumulative_cv_norm[cumulative_cv_norm != 0] * log(cumulative_cv_norm[cumulative_cv_norm != 0]))
-    
-  negent_PDF <- max_entropy_PDF - shannon_PDF
-  
-  uniform_KL_quantile <- KL_new(cumulative_cv_norm, rep(1 / length(cumulative_cv_norm), length(cumulative_cv_norm)))
-
-  shannonPDF_dynamic_vec[i] <- shannon_PDF
-  shannonQuantile_dynamic_vec[i] <- shannon_quantile
-  negentPDF_dynamic_vec[i] <- negent_PDF
-  uniformKL_Quantile_dynamic_vec[i] <- uniform_KL_quantile
-  
-  population_specified_dynamic$Population <- population_specified_dynamic$Population - (as.numeric(filled_modified[i,-1]) / 1000)
-}
-```
-
-Plot the results
-
-```{r plot dynamic parish populations}
-plot.ts(shannonPDF_vec)
-lines(shannonPDF_dynamic_vec, col = "red")
-
-plot.ts(shannonQuantile_vec, ylim = c(3.5, 3.9))
-lines(shannonQuantile_dynamic_vec, col = "red")
-
-plot.ts(negentPDF_vec)
-lines(negentPDF_dynamic_vec, col = "red")
-
-plot.ts(uniformKL_Quantile_vec, ylim = c(0, 0.4))
-lines(uniformKL_Quantile_dynamic_vec, col = "red")
-```
-
-The change in quantile function entropy after the outbreak is mitigated. This raises the question of what might happen if we start the analysis on the first day of the outbreak.
-
-Start on the first day of the outbreak.
+Identify the first day of the outbreak (new_start_date).
 
 ```{r start on outbreak}
-num_zeroes <- rep(0, nrow(filled_modified))
+# Find how many parishes had zero deaths on a particular day
+num_zeroes <- rep(NA_real_, nrow(filled_modified))
+
 for(i in 1:nrow(filled_modified)){
   num_zeroes[i] <- sum(filled_modified[i,-1] == 0)
 }
+
+# Print the day on which the number of parishes with at least one death was greatest
 print(match(min(num_zeroes), num_zeroes))
+
+# Print the index of September 1, 1630
 print(match(as.Date("1630-09-01", format = "%Y-%m-%d"), filled_modified$Date))
 
-new_start_date <- 637
+# After manually going through the data, day 637 is when the number of deaths rises above the levels reached in the secondary wave.
+new_start_date <- 609 #Set this as 1 if we want to start on January 1, 1629
+```
+
+To distinguish between entropy increasing due to the first instance of a case in a parish and the overall distribution approaching uniformity, we identify the first day after our new start date that all parishes have at least one case.
+
+```{r find first day with all non-zero parishes}
+non_zero_parish_day <- NA_real_
+
+for(i in new_start_date:nrow(filled_modified)){
+  cumulative_cv <- colSums(filled_modified[new_start_date:i, -1])
+  if(sum(cumulative_cv == 0) == 0){
+    non_zero_parish_day <- i
+    print(non_zero_parish_day)
+    break
+  }
+}
+
+# What's the last zero parish?
+
+print(which(colSums(filled_modified[new_start_date:(non_zero_parish_day - 60),-1]) == 0))
+
+# What parishes have no cases up to the start of the outbreak?
+
+print(colSums(filled_modified[1:609, -1]) == 0)
+
+# What parishes have no new cases the day the outbreak starts?
+
+print(which(filled_modified[637, -1] == 0))
+```
+
+Let's temporarily remove all of the parishes that don't have any cases 30 days after the start of the epidemic to eliminate this as a factor.
+
+```{r new filled_modified}
+outliers_temporary <- c("S.Polo", "S.Stae", "S.Marco", "S.Basso", "S.Pantalon", "S.Silvestro", "S.Simon.Grande", "S.Toma", "S.Severo")
+filled_modified_temporary <- filled[, !(colnames(filled) %in% outliers_temporary)]
+population_specified_modified_temporary <- population_specified[!(population_specified$Parish %in% outliers_temporary),]
+```
+
+Now what's the first day where no parish has zero cases starting from our new start date?
+
+```{r first day with all zero parishes after removal}
+non_zero_parish_day <- NA_real_
+
+for(i in new_start_date:nrow(filled_modified_temporary)){
+  cumulative_cv <- colSums(filled_modified_temporary[new_start_date:i, -1])
+  if(sum(cumulative_cv == 0) == 0){
+    non_zero_parish_day <- i
+    print(non_zero_parish_day)
+    break
+  }
+}
 ```
 
 Non-dynamic populations (baseline).
-```{r start on outbreak non-dynamic parish populations}
-instantaneous_mortality_df <- as.data.frame(matrix(NA_real_, nrow = nrow(filled_modified), ncol = ncol(filled_modified) - 1))
 
-shannonPDF_vec <- rep(NA_real_, nrow(filled_modified))
-shannonQuantile_vec <- rep(NA_real_, nrow(filled_modified))
-negentPDF_vec <- rep(NA_real_, nrow(filled_modified))
-uniformKL_Quantile_vec <- rep(NA_real_, nrow(filled_modified))
+```{r non-dynamic parish populations}
+instantaneous_mortality_df <- as.data.frame(matrix(NA_real_, nrow = nrow(filled_modified_temporary), ncol = ncol(filled_modified_temporary) - 1))
 
-for(i in new_start_date:nrow(filled_modified)){
-  instantaneous_cv <- filled_modified[i, -1] / (population_specified_modified$Population * 1000)
+shannonPDF_vec <- rep(0, nrow(filled_modified_temporary))
+shannonQuantile_vec <- rep(0, nrow(filled_modified_temporary))
+negentPDF_vec <- rep(0, nrow(filled_modified_temporary))
+uniformKL_Quantile_vec <- rep(0, nrow(filled_modified_temporary))
+
+for(i in new_start_date:nrow(filled_modified_temporary)){
+  instantaneous_cv <- filled_modified_temporary[i, -1] / (population_specified_modified_temporary$Population * 1000)
   instantaneous_mortality_df[i, ] <- instantaneous_cv
   
   cumulative_cv <- colSums(instantaneous_mortality_df[new_start_date:i,])
@@ -3138,7 +3298,7 @@ for(i in new_start_date:nrow(filled_modified)){
   cumulative_cv_norm <- cumulative_cv / sum(cumulative_cv)
   
   kde_output_vec_2 <- kde_entropy(cumulative_cv)
-  
+    
   shannon_PDF <- kde_output_vec_2[1]
   max_entropy_PDF <- kde_output_vec_2[2]
   
@@ -3156,17 +3316,18 @@ for(i in new_start_date:nrow(filled_modified)){
 ```
 
 Dynamic populations.
-```{r start on outbreak dynamic parish populations}
-population_specified_dynamic <- population_specified_modified
-instantaneous_dynamic_mortality_df <- as.data.frame(matrix(NA_real_, nrow = nrow(filled_modified), ncol = ncol(filled_modified) - 1))
 
-shannonPDF_dynamic_vec <- rep(NA_real_, nrow(filled_modified))
-shannonQuantile_dynamic_vec <- rep(NA_real_, nrow(filled_modified))
-negentPDF_dynamic_vec <- rep(NA_real_, nrow(filled_modified))
-uniformKL_Quantile_dynamic_vec <- rep(NA_real_, nrow(filled_modified))
+```{r dynamic parish populations}
+population_specified_dynamic <- population_specified_modified_temporary
+instantaneous_dynamic_mortality_df <- as.data.frame(matrix(NA_real_, nrow = nrow(filled_modified_temporary), ncol = ncol(filled_modified_temporary) - 1))
 
-for(i in new_start_date:nrow(filled_modified)){
-  instantaneous_cv <- filled_modified[i, -1] / (population_specified_dynamic$Population * 1000)
+shannonPDF_dynamic_vec <- rep(NA_real_, nrow(filled_modified_temporary))
+shannonQuantile_dynamic_vec <- rep(NA_real_, nrow(filled_modified_temporary))
+negentPDF_dynamic_vec <- rep(NA_real_, nrow(filled_modified_temporary))
+uniformKL_Quantile_dynamic_vec <- rep(NA_real_, nrow(filled_modified_temporary))
+
+for(i in new_start_date:nrow(filled_modified_temporary)){
+  instantaneous_cv <- filled_modified_temporary[i, -1] / (population_specified_dynamic$Population * 1000)
   instantaneous_dynamic_mortality_df[i, ] <- instantaneous_cv
   
   cumulative_cv <- colSums(instantaneous_dynamic_mortality_df[new_start_date:i,])
@@ -3191,24 +3352,802 @@ for(i in new_start_date:nrow(filled_modified)){
   negentPDF_dynamic_vec[i] <- negent_PDF
   uniformKL_Quantile_dynamic_vec[i] <- uniform_KL_quantile
   
-  population_specified_dynamic$Population <- population_specified_dynamic$Population - (as.numeric(filled_modified[i,-1]) / 1000)
+  population_specified_dynamic$Population <- population_specified_dynamic$Population - (as.numeric(filled_modified_temporary[i,-1]) / 1000)
 }
 ```
 
-Plot the results
+Plot the results.
 
-```{r start on outbreak plot dynamic parish populations}
-plot.ts(shannonPDF_vec, xlim = c(new_start_date, nrow(filled_modified)), ylim = c(-7, 0))
+```{r plot dynamic parish populations}
+plot.ts(shannonPDF_vec, xlim = c(new_start_date, nrow(filled_modified_temporary)), ylim = c(-7, 0))
+abline(v = non_zero_parish_day)
 lines(shannonPDF_dynamic_vec, col = "red")
 
-plot.ts(shannonQuantile_vec, xlim = c(new_start_date, nrow(filled_modified)))
-lines(shannonQuantile_dynamic_vec, col = "red")
+plot.ts(exp(shannonQuantile_vec), xlim = c(new_start_date, nrow(filled_modified_temporary)), ylim = c(33, 45)) #Effective number of parishes
+abline(v = non_zero_parish_day) # the day on which every parish has non-zero cases
+lines(exp(shannonQuantile_dynamic_vec), col = "red") # Dynamic population
+lines(rowSums(filled_modified_temporary[,-1])/40 + 35, col = "blue") # Daily mortality
+abline(h = ncol(filled_modified_temporary[,-1]), col = "orange") # Total number of parishes
 
-plot.ts(negentPDF_vec, xlim = c(new_start_date, nrow(filled_modified)), ylim = c(0, 0.2))
+plot.ts(negentPDF_vec, xlim = c(new_start_date, nrow(filled_modified_temporary)), ylim = c(0, 0.2))
+abline(v = non_zero_parish_day)
 lines(negentPDF_dynamic_vec, col = "red")
-lines(rowSums(filled_modified[,-1])/1000, col = "blue")
+lines(rowSums(filled_modified_temporary[,-1])/1000, col = "blue")
 
-plot.ts(uniformKL_Quantile_vec, xlim = c(new_start_date, nrow(filled_modified)), ylim = c(0, 0.4))
+plot.ts(uniformKL_Quantile_vec, xlim = c(new_start_date, nrow(filled_modified_temporary)), ylim = c(0, 0.4))
+abline(v = non_zero_parish_day)
 lines(uniformKL_Quantile_dynamic_vec, col = "red")
-lines(rowSums(filled_modified[,-1])/2000, col = "blue")
+lines(rowSums(filled_modified_temporary[,-1])/2000, col = "blue")
+```
+
+When we start on January 1, 1629, the change in quantile function entropy after the outbreak is mitigated. Intuitively, this makes sense: deaths before the start of the outbreak were likely randomly distributed; thus, the distribution of cumulative mortality likely already reached close to maximum entropy. However, when we start at the beginning of the epidemic, adjusting population estimates by deaths no longer has a large impact. 
+
+## Sinusoidal Baseline and Plague-Related Excess Mortality
+
+To estimate how many deaths during the primary outbreak were attributable to plague, we first fit an annual sinusoidal baseline to all observations before September 1, 1630. The harmonic regression below is equivalent to fitting a sinusoid with an estimated mean, amplitude, and phase:
+
+$$
+B(t) = \beta_0 + \beta_1 \sin(2\pi t / 365.2425) +
+       \beta_2 \cos(2\pi t / 365.2425).
+$$
+
+We then extrapolate this non-plague baseline through December 31, 1630 and subtract it from the observed daily mortality. Negative daily differences are retained in the signed estimate for diagnostic purposes, but are set to zero in the estimate of plague-related deaths because they do not represent negative plague cases.
+
+```{r fit sinusoidal pre-plague baseline}
+outbreak_start <- as.Date("1630-09-01")
+outbreak_end <- as.Date("1630-12-31")
+annual_period <- 365.2425
+
+# Aggregate the parish-level mortality counts to a citywide daily count.
+baseline_daily <- data.frame(
+  Date = filled$Date,
+  observed_deaths = rowSums(filled[, -1], na.rm = TRUE)
+)
+baseline_daily$day_index <- as.numeric(
+  baseline_daily$Date - min(baseline_daily$Date)
+)
+baseline_daily$sin_annual <- sin(
+  2 * pi * baseline_daily$day_index / annual_period
+)
+baseline_daily$cos_annual <- cos(
+  2 * pi * baseline_daily$day_index / annual_period
+)
+
+pre_plague_daily <- baseline_daily[
+  baseline_daily$Date < outbreak_start,
+]
+
+sinusoidal_baseline_model <- lm(
+  observed_deaths ~ sin_annual + cos_annual,
+  data = pre_plague_daily
+)
+
+# Baseline fitted values are constrained to be nonnegative because mortality counts cannot be negative.
+baseline_daily$expected_baseline_deaths <- pmax(
+  predict(sinusoidal_baseline_model, newdata = baseline_daily),
+  0
+)
+
+outbreak_excess <- baseline_daily[
+  baseline_daily$Date >= outbreak_start &
+    baseline_daily$Date <= outbreak_end,
+]
+outbreak_excess$signed_excess_deaths <-
+  outbreak_excess$observed_deaths -
+  outbreak_excess$expected_baseline_deaths
+outbreak_excess$estimated_plague_deaths <- pmax(
+  outbreak_excess$signed_excess_deaths,
+  0
+)
+
+baseline_model_summary <- summary(sinusoidal_baseline_model)
+baseline_amplitude <- sqrt(sum(
+  coef(sinusoidal_baseline_model)[c("sin_annual", "cos_annual")]^2
+))
+
+plague_excess_summary <- data.frame(
+  outbreak_start = outbreak_start,
+  outbreak_end = outbreak_end,
+  observed_deaths = sum(outbreak_excess$observed_deaths),
+  expected_baseline_deaths = sum(
+    outbreak_excess$expected_baseline_deaths
+  ),
+  signed_excess_deaths = sum(outbreak_excess$signed_excess_deaths),
+  estimated_plague_deaths = sum(
+    outbreak_excess$estimated_plague_deaths
+  )
+)
+plague_excess_summary$estimated_plague_fraction <-
+  plague_excess_summary$estimated_plague_deaths /
+  plague_excess_summary$observed_deaths
+
+print(baseline_model_summary)
+print(paste("Estimated seasonal amplitude:", round(baseline_amplitude, 2)))
+print(plague_excess_summary)
+```
+
+The signed excess is the difference between total observed and expected deaths over the entire window. The nonnegative estimate, `estimated_plague_deaths`, is the sum of daily excess deaths after truncating negative daily differences at zero and is the primary estimate of plague-related mortality.
+
+```{r plot sinusoidal baseline and excess mortality, fig.width=10, fig.height=7}
+baseline_plot_data <- baseline_daily[
+  baseline_daily$Date <= outbreak_end,
+]
+
+baseline_plot <- ggplot(
+  baseline_plot_data,
+  aes(x = Date, y = observed_deaths)
+) +
+  annotate(
+    "rect",
+    xmin = outbreak_start,
+    xmax = outbreak_end,
+    ymin = -Inf,
+    ymax = Inf,
+    fill = "firebrick",
+    alpha = 0.08
+  ) +
+  geom_line(color = "grey45", linewidth = 0.35) +
+  geom_line(
+    aes(y = expected_baseline_deaths),
+    color = "steelblue",
+    linewidth = 0.8
+  ) +
+  labs(
+    x = "Date",
+    y = "Daily deaths",
+    title = "Observed Mortality and Pre-Plague Sinusoidal Baseline",
+    subtitle = "Blue: baseline fitted before September 1, 1630; shaded: primary outbreak"
+  ) +
+  theme_bw()
+
+excess_plot <- ggplot(
+  outbreak_excess,
+  aes(x = Date, y = estimated_plague_deaths)
+) +
+  geom_col(fill = "firebrick", width = 1) +
+  labs(
+    x = "Date",
+    y = "Estimated plague-related deaths",
+    title = "Daily Mortality Above the Sinusoidal Baseline"
+  ) +
+  theme_bw()
+
+plot_grid(
+  baseline_plot,
+  excess_plot,
+  ncol = 1,
+  labels = c("a", "b"),
+  align = "v"
+)
+```
+
+## Spatial Clustering Before vs. During the Primary Outbreak
+
+The all-cause mortality data may include deaths from the concurrent smallpox
+outbreak, particularly before the primary plague wave. We therefore compare
+the spatial pattern of mortality in the pre-outbreak period (January 1, 1629
+through August 31, 1630) with the primary outbreak period (September 1 through
+December 31, 1630). Period-specific mortality is expressed as deaths per 1,000
+person-days so that the unequal lengths of the two periods do not affect the
+reported rates.
+
+The 1729 parish polygons utilized in the choropleth map generation are used as an
+approximation to the 1630 parish boundaries. Because the parishes were separated by
+canals, we define geographic proximity using a symmetric four-nearest-neighbor
+graph based on projected parish centroids. Analyses using three, five, and eight
+nearest neighbors assess sensitivity to this choice of spatial scale.
+
+```{r prepare spatial clustering data, warning=FALSE, message=FALSE}
+spatial_pre_start <- as.Date("1629-01-01")
+spatial_pre_end <- as.Date("1630-08-31")
+spatial_outbreak_start <- as.Date("1630-09-01")
+spatial_outbreak_end <- as.Date("1630-12-31")
+spatial_permutations <- 9999L
+spatial_seed <- 1630L
+spatial_annual_period <- 365.2425
+
+normalize_spatial_parish <- function(x) {
+  x <- gsub("[[:space:]]", ".", x)
+  x <- sub("^S\\.\\.", "S.", x)
+  x[grepl("^S\\.Mois", x)] <- "S.Moise"
+  x[grepl("^S\\.Tom", x)] <- "S.Toma"
+  x[grepl("^S\\.Giacomo\\.dell", x)] <- "S.Giacomo.dell.Orio"
+  x[x == "S.Angelo.Rafael"] <- "Angelo.Rafael"
+  x
+}
+
+# Re-read with check.names = FALSE so accented parish names are not dropped by
+# locale-dependent name conversion in the notebook's earlier cleaning steps.
+spatial_filled <- read.csv(
+  "filledna_full_ts.csv",
+  check.names = FALSE
+)
+colnames(spatial_filled)[1] <- "Date"
+spatial_filled$Date <- as.Date(spatial_filled$Date, format = "%Y-%m-%d")
+colnames(spatial_filled)[-1] <- normalize_spatial_parish(
+  colnames(spatial_filled)[-1]
+)
+spatial_filled[, -1] <- lapply(
+  spatial_filled[, -1, drop = FALSE],
+  function(x) {
+    x <- as.numeric(x)
+    x[is.na(x)] <- 0
+    x
+  }
+)
+
+spatial_excluded_parishes <- c(
+  "S.Marcilian",
+  "S.Polo",
+  "S.Stae",
+  "S.Marco"
+)
+spatial_filled <- spatial_filled[
+  , !(colnames(spatial_filled) %in% spatial_excluded_parishes)
+]
+
+analysis_parishes <- colnames(spatial_filled)[-1]
+analysis_parishes_normalized <- normalize_spatial_parish(analysis_parishes)
+
+stopifnot(
+  length(analysis_parishes) == 50L,
+  !anyDuplicated(analysis_parishes_normalized)
+)
+
+population_names_normalized <- normalize_spatial_parish(
+  population$Parish
+)
+population_match <- match(
+  analysis_parishes_normalized,
+  population_names_normalized
+)
+stopifnot(!anyNA(population_match))
+
+spatial_population <-
+  population$Population[population_match] * 1000
+stopifnot(all(is.finite(spatial_population)), all(spatial_population > 0))
+
+pre_period_index <-
+  spatial_filled$Date >= spatial_pre_start &
+  spatial_filled$Date <= spatial_pre_end
+outbreak_period_index <-
+  spatial_filled$Date >= spatial_outbreak_start &
+  spatial_filled$Date <= spatial_outbreak_end
+
+pre_period_days <- sum(pre_period_index)
+outbreak_period_days <- sum(outbreak_period_index)
+stopifnot(pre_period_days == 608L, outbreak_period_days == 122L)
+
+pre_period_deaths <- colSums(
+  spatial_filled[pre_period_index, -1, drop = FALSE]
+)
+outbreak_period_deaths <- colSums(
+  spatial_filled[outbreak_period_index, -1, drop = FALSE]
+)
+
+# Fit the same annual harmonic form used in the preceding citywide baseline
+# analysis separately for each parish. Predictions below zero are truncated
+# before expected deaths are summed over the outbreak period.
+spatial_day_index <- as.numeric(
+  spatial_filled$Date - min(spatial_filled$Date)
+)
+spatial_harmonic_data <- data.frame(
+  sin_annual = sin(2 * pi * spatial_day_index / spatial_annual_period),
+  cos_annual = cos(2 * pi * spatial_day_index / spatial_annual_period)
+)
+
+expected_outbreak_deaths <- rep(NA_real_, length(analysis_parishes))
+for (j in seq_along(analysis_parishes)) {
+  parish_harmonic_data <- spatial_harmonic_data
+  parish_harmonic_data$deaths <- spatial_filled[[analysis_parishes[j]]]
+
+  parish_baseline_model <- lm(
+    deaths ~ sin_annual + cos_annual,
+    data = parish_harmonic_data[pre_period_index, ]
+  )
+  parish_expected_daily <- predict(
+    parish_baseline_model,
+    newdata = parish_harmonic_data[outbreak_period_index, ]
+  )
+
+  if (any(!is.finite(parish_expected_daily))) {
+    parish_expected_daily <- rep(
+      mean(parish_harmonic_data$deaths[pre_period_index]),
+      outbreak_period_days
+    )
+  }
+
+  expected_outbreak_deaths[j] <- sum(pmax(parish_expected_daily, 0))
+}
+
+excess_outbreak_deaths <- pmax(
+  outbreak_period_deaths - expected_outbreak_deaths,
+  0
+)
+
+spatial_period_values <- data.frame(
+  Parish = analysis_parishes_normalized,
+  Population_1629 = spatial_population,
+  Pre_outbreak_deaths = as.numeric(pre_period_deaths),
+  Outbreak_deaths = as.numeric(outbreak_period_deaths),
+  Expected_baseline_deaths = expected_outbreak_deaths,
+  Excess_outbreak_deaths = excess_outbreak_deaths
+)
+spatial_period_values$Pre_outbreak_rate <-
+  spatial_period_values$Pre_outbreak_deaths /
+  (spatial_period_values$Population_1629 * pre_period_days) * 1000
+spatial_period_values$Outbreak_rate <-
+  spatial_period_values$Outbreak_deaths /
+  (spatial_period_values$Population_1629 * outbreak_period_days) * 1000
+spatial_period_values$Excess_outbreak_rate <-
+  spatial_period_values$Excess_outbreak_deaths /
+  (spatial_period_values$Population_1629 * outbreak_period_days) * 1000
+
+spatial_shape_all <- st_read(
+  "1729_PAR_CONF.zip.geojson",
+  quiet = TRUE
+)
+spatial_shape_all$Parish <- normalize_spatial_parish(spatial_shape_all$NAME)
+spatial_shape_all <- st_make_valid(spatial_shape_all)
+
+# Dissolve duplicate parish features, including the two S. Leonardo polygons.
+spatial_shape_all <- aggregate(
+  spatial_shape_all["Parish"],
+  by = list(Parish = spatial_shape_all$Parish),
+  FUN = function(x) x[1]
+)
+spatial_shape_crs <- st_crs(spatial_shape_all)
+spatial_shape_all <- st_transform(spatial_shape_all, 32633)
+spatial_shape_all <- suppressWarnings(st_buffer(spatial_shape_all, 0))
+spatial_shape_all <- st_transform(spatial_shape_all, spatial_shape_crs)
+
+shape_match <- match(
+  analysis_parishes_normalized,
+  spatial_shape_all$Parish
+)
+stopifnot(!anyNA(shape_match))
+
+spatial_shape <- spatial_shape_all[shape_match, ]
+spatial_shape$Parish <- analysis_parishes_normalized
+stopifnot(
+  nrow(spatial_shape) == 50L,
+  !anyDuplicated(spatial_shape$Parish),
+  all(st_is_valid(spatial_shape)),
+  !any(st_is_empty(spatial_shape))
+)
+
+spatial_shape <- merge(
+  spatial_shape,
+  spatial_period_values,
+  by = "Parish",
+  sort = FALSE
+)
+spatial_shape <- spatial_shape[
+  match(analysis_parishes_normalized, spatial_shape$Parish),
+]
+
+literal_contiguity_neighbors <- st_touches(spatial_shape)
+literal_contiguity_isolates <- sum(lengths(literal_contiguity_neighbors) == 0L)
+stopifnot(literal_contiguity_isolates == nrow(spatial_shape))
+print(paste(
+  "Parishes isolated under literal polygon contiguity:",
+  literal_contiguity_isolates,
+  "of",
+  nrow(spatial_shape)
+))
+
+spatial_centroids <- st_centroid(
+  st_geometry(st_transform(spatial_shape, 32633))
+)
+spatial_distance_matrix <- as.matrix(st_distance(spatial_centroids))
+spatial_distance_matrix <- units::drop_units(spatial_distance_matrix)
+diag(spatial_distance_matrix) <- Inf
+```
+
+```{r define spatial clustering functions}
+make_symmetric_knn_weights <- function(distance_matrix, k) {
+  n <- nrow(distance_matrix)
+  directed_adjacency <- matrix(0, nrow = n, ncol = n)
+
+  for (i in seq_len(n)) {
+    directed_adjacency[i, order(distance_matrix[i, ])[seq_len(k)]] <- 1
+  }
+
+  adjacency <- 1 * ((directed_adjacency + t(directed_adjacency)) > 0)
+  weights <- adjacency / rowSums(adjacency)
+
+  stopifnot(
+    all(adjacency == t(adjacency)),
+    all(rowSums(adjacency) > 0),
+    max(abs(rowSums(weights) - 1)) < 1e-12
+  )
+
+  list(adjacency = adjacency, weights = weights)
+}
+
+global_moran_i <- function(x, weights) {
+  centered_x <- x - mean(x)
+  n <- length(centered_x)
+  s0 <- sum(weights)
+
+  (n / s0) *
+    sum(weights * (centered_x %o% centered_x)) /
+    sum(centered_x^2)
+}
+
+permutation_global_moran <- function(
+  x,
+  weights,
+  permutations = 9999L,
+  seed = 1630L
+) {
+  observed <- global_moran_i(x, weights)
+  expected <- -1 / (length(x) - 1)
+
+  set.seed(seed)
+  simulated <- replicate(
+    permutations,
+    global_moran_i(sample(x, replace = FALSE), weights)
+  )
+
+  data.frame(
+    Moran_I = observed,
+    Expected_I = expected,
+    Permutation_p =
+      (1 + sum(abs(simulated - expected) >= abs(observed - expected))) /
+      (permutations + 1),
+    Null_2.5_percentile = unname(quantile(simulated, 0.025)),
+    Null_97.5_percentile = unname(quantile(simulated, 0.975))
+  )
+}
+
+paired_moran_difference_test <- function(
+  x_pre,
+  x_outbreak,
+  weights,
+  permutations = 9999L,
+  seed = 1630L
+) {
+  pre_z <- as.numeric(scale(x_pre))
+  outbreak_z <- as.numeric(scale(x_outbreak))
+  observed_difference <-
+    global_moran_i(outbreak_z, weights) -
+    global_moran_i(pre_z, weights)
+
+  set.seed(seed)
+  simulated_difference <- replicate(permutations, {
+    swap_period <- runif(length(pre_z)) < 0.5
+    permuted_pre <- pre_z
+    permuted_outbreak <- outbreak_z
+    permuted_pre[swap_period] <- outbreak_z[swap_period]
+    permuted_outbreak[swap_period] <- pre_z[swap_period]
+
+    global_moran_i(permuted_outbreak, weights) -
+      global_moran_i(permuted_pre, weights)
+  })
+
+  data.frame(
+    Moran_difference = observed_difference,
+    Paired_permutation_p =
+      (1 + sum(abs(simulated_difference) >= abs(observed_difference))) /
+      (permutations + 1),
+    Null_2.5_percentile = unname(quantile(simulated_difference, 0.025)),
+    Null_97.5_percentile = unname(quantile(simulated_difference, 0.975))
+  )
+}
+
+conditional_local_moran <- function(
+  x,
+  weights,
+  permutations = 9999L,
+  seed = 1630L
+) {
+  z <- as.numeric(scale(x))
+  spatial_lag <- as.numeric(weights %*% z)
+  m2 <- sum(z^2) / length(z)
+  observed_local_i <- z * spatial_lag / m2
+  permutation_p <- rep(NA_real_, length(z))
+
+  for (i in seq_along(z)) {
+    neighbor_index <- which(weights[i, ] > 0)
+    neighbor_weights <- weights[i, neighbor_index]
+    candidate_values <- z[-i]
+
+    set.seed(seed + i)
+    simulated_local_i <- replicate(permutations, {
+      sampled_values <- sample(
+        candidate_values,
+        length(neighbor_index),
+        replace = FALSE
+      )
+      z[i] * sum(neighbor_weights * sampled_values) / m2
+    })
+    simulated_center <- mean(simulated_local_i)
+    permutation_p[i] <-
+      (1 + sum(
+        abs(simulated_local_i - simulated_center) >=
+          abs(observed_local_i[i] - simulated_center)
+      )) / (permutations + 1)
+  }
+
+  adjusted_p <- p.adjust(permutation_p, method = "BH")
+  cluster <- ifelse(
+    z >= 0 & spatial_lag >= 0,
+    "High-high",
+    ifelse(
+      z < 0 & spatial_lag < 0,
+      "Low-low",
+      ifelse(z >= 0, "High-low", "Low-high")
+    )
+  )
+  cluster[adjusted_p >= 0.05] <- "Not significant"
+
+  data.frame(
+    Local_Moran_I = observed_local_i,
+    Standardized_rate = z,
+    Spatial_lag = spatial_lag,
+    Permutation_p = permutation_p,
+    Adjusted_p = adjusted_p,
+    Cluster = factor(
+      cluster,
+      levels = c(
+        "High-high",
+        "Low-low",
+        "High-low",
+        "Low-high",
+        "Not significant"
+      )
+    )
+  )
+}
+```
+
+```{r calculate global and local spatial clustering results}
+spatial_rate_vectors <- list(
+  "Pre-outbreak" = spatial_shape$Pre_outbreak_rate,
+  "Observed outbreak" = spatial_shape$Outbreak_rate,
+  "Baseline-adjusted outbreak" = spatial_shape$Excess_outbreak_rate
+)
+spatial_period_days <- c(
+  "Pre-outbreak" = pre_period_days,
+  "Observed outbreak" = outbreak_period_days,
+  "Baseline-adjusted outbreak" = outbreak_period_days
+)
+spatial_period_death_totals <- c(
+  "Pre-outbreak" = sum(spatial_shape$Pre_outbreak_deaths),
+  "Observed outbreak" = sum(spatial_shape$Outbreak_deaths),
+  "Baseline-adjusted outbreak" = sum(spatial_shape$Excess_outbreak_deaths)
+)
+
+primary_knn <- make_symmetric_knn_weights(spatial_distance_matrix, 4L)
+primary_spatial_weights <- primary_knn$weights
+
+spatial_global_results <- do.call(rbind, lapply(
+  names(spatial_rate_vectors),
+  function(period_name) {
+    result <- permutation_global_moran(
+      spatial_rate_vectors[[period_name]],
+      primary_spatial_weights,
+      permutations = spatial_permutations,
+      seed = spatial_seed
+    )
+    data.frame(
+      Period = period_name,
+      Days = unname(spatial_period_days[period_name]),
+      Deaths = unname(spatial_period_death_totals[period_name]),
+      result,
+      row.names = NULL
+    )
+  }
+))
+
+spatial_moran_difference <- paired_moran_difference_test(
+  spatial_shape$Pre_outbreak_rate,
+  spatial_shape$Outbreak_rate,
+  primary_spatial_weights,
+  permutations = spatial_permutations,
+  seed = spatial_seed
+)
+
+spatial_pattern_similarity <- data.frame(
+  Comparison = c(
+    "Pre-outbreak vs. observed outbreak",
+    "Observed vs. baseline-adjusted outbreak"
+  ),
+  Spearman_rho = c(
+    cor(
+      spatial_shape$Pre_outbreak_rate,
+      spatial_shape$Outbreak_rate,
+      method = "spearman"
+    ),
+    cor(
+      spatial_shape$Outbreak_rate,
+      spatial_shape$Excess_outbreak_rate,
+      method = "spearman"
+    )
+  )
+)
+
+spatial_weight_sensitivity <- do.call(rbind, lapply(
+  c(3L, 4L, 5L, 8L),
+  function(k) {
+    knn <- make_symmetric_knn_weights(spatial_distance_matrix, k)
+    do.call(rbind, lapply(names(spatial_rate_vectors), function(period_name) {
+      result <- permutation_global_moran(
+        spatial_rate_vectors[[period_name]],
+        knn$weights,
+        permutations = spatial_permutations,
+        seed = spatial_seed
+      )
+      data.frame(
+        Neighbors = k,
+        Period = period_name,
+        Minimum_degree = min(rowSums(knn$adjacency)),
+        Maximum_degree = max(rowSums(knn$adjacency)),
+        result,
+        row.names = NULL
+      )
+    }))
+  }
+))
+
+spatial_local_results <- do.call(rbind, lapply(
+  names(spatial_rate_vectors),
+  function(period_name) {
+    result <- conditional_local_moran(
+      spatial_rate_vectors[[period_name]],
+      primary_spatial_weights,
+      permutations = spatial_permutations,
+      seed = spatial_seed
+    )
+    data.frame(
+      Parish = spatial_shape$Parish,
+      Period = period_name,
+      result,
+      row.names = NULL
+    )
+  }
+))
+
+print(spatial_global_results)
+print(spatial_moran_difference)
+print(spatial_pattern_similarity)
+print(spatial_weight_sensitivity)
+print(subset(
+  spatial_local_results,
+  Cluster != "Not significant",
+  select = c(Parish, Period, Local_Moran_I, Adjusted_p, Cluster)
+))
+```
+
+Under the primary four-nearest-neighbor definition, pre-outbreak mortality had
+Moran's $I$ = `r sprintf("%.3f", spatial_global_results$Moran_I[spatial_global_results$Period == "Pre-outbreak"])`
+($p$ = `r sprintf("%.3f", spatial_global_results$Permutation_p[spatial_global_results$Period == "Pre-outbreak"])`),
+whereas observed outbreak mortality had Moran's $I$ =
+`r sprintf("%.3f", spatial_global_results$Moran_I[spatial_global_results$Period == "Observed outbreak"])`
+($p$ = `r sprintf("%.3f", spatial_global_results$Permutation_p[spatial_global_results$Period == "Observed outbreak"])`).
+The direct paired difference in Moran's $I$ was
+`r sprintf("%.3f", spatial_moran_difference$Moran_difference)`
+($p$ = `r sprintf("%.3f", spatial_moran_difference$Paired_permutation_p)`),
+so the data do not establish a statistically clear difference in global
+clustering strength between periods. Evidence of outbreak clustering also
+depends on the neighborhood scale, as shown in the sensitivity table.
+
+After subtracting each parish's sinusoidal baseline, the outbreak pattern had
+Moran's $I$ =
+`r sprintf("%.3f", spatial_global_results$Moran_I[spatial_global_results$Period == "Baseline-adjusted outbreak"])`
+($p$ = `r sprintf("%.3f", spatial_global_results$Permutation_p[spatial_global_results$Period == "Baseline-adjusted outbreak"])`).
+The observed and baseline-adjusted outbreak rates were very similarly ranked
+across parishes (Spearman $\rho$ =
+`r sprintf("%.3f", spatial_pattern_similarity$Spearman_rho[spatial_pattern_similarity$Comparison == "Observed vs. baseline-adjusted outbreak"])`).
+Thus, subtracting modeled non-plague baseline mortality does not materially
+alter the estimated outbreak spatial pattern. This supports robustness to
+all-cause mortality contamination, while not identifying individual deaths by
+cause and not proving that pre-outbreak mortality was spatially uniform.
+
+```{r plot spatial clustering comparison, fig.width=12, fig.height=8, warning=FALSE}
+spatial_rate_map_data <- do.call(rbind, lapply(
+  names(spatial_rate_vectors),
+  function(period_name) {
+    period_shape <- spatial_shape
+    period_shape$Period <- period_name
+    period_shape$Standardized_rate <- as.numeric(scale(
+      spatial_rate_vectors[[period_name]]
+    ))
+    period_shape
+  }
+))
+spatial_rate_map_data$Period <- factor(
+  spatial_rate_map_data$Period,
+  levels = names(spatial_rate_vectors)
+)
+
+spatial_lisa_map_data <- merge(
+  spatial_shape[, "Parish"],
+  spatial_local_results[, c("Parish", "Period", "Cluster")],
+  by = "Parish",
+  sort = FALSE
+)
+spatial_lisa_map_data$Period <- factor(
+  spatial_lisa_map_data$Period,
+  levels = names(spatial_rate_vectors)
+)
+
+shared_rate_limit <- max(abs(spatial_rate_map_data$Standardized_rate))
+
+spatial_rate_map <- ggplot(spatial_rate_map_data) +
+  geom_sf(
+    aes(fill = Standardized_rate),
+    color = "grey35",
+    linewidth = 0.15
+  ) +
+  facet_wrap(~Period, nrow = 1) +
+  scale_fill_gradient2(
+    low = "#2166AC",
+    mid = "white",
+    high = "#B2182B",
+    midpoint = 0,
+    limits = c(-shared_rate_limit, shared_rate_limit),
+    name = "Mortality rate\n(z-score)"
+  ) +
+  coord_sf(datum = NA) +
+  theme_void() +
+  theme(
+    strip.text = element_text(face = "bold", size = 10),
+    legend.position = "bottom",
+    legend.key.width = grid::unit(1.5, "cm"),
+    plot.margin = margin(2, 2, 2, 2)
+  )
+
+lisa_palette <- c(
+  "High-high" = "#B2182B",
+  "Low-low" = "#2166AC",
+  "High-low" = "#EF8A62",
+  "Low-high" = "#67A9CF",
+  "Not significant" = "grey88"
+)
+
+spatial_lisa_map <- ggplot(spatial_lisa_map_data) +
+  geom_sf(
+    aes(fill = Cluster),
+    color = "grey35",
+    linewidth = 0.15
+  ) +
+  facet_wrap(~Period, nrow = 1) +
+  scale_fill_manual(
+    values = lisa_palette,
+    drop = FALSE,
+    name = "Local Moran cluster\n(BH-adjusted p < 0.05)"
+  ) +
+  coord_sf(datum = NA) +
+  theme_void() +
+  theme(
+    strip.text = element_blank(),
+    legend.position = "bottom",
+    plot.margin = margin(2, 2, 2, 2)
+  )
+
+spatial_clustering_figure <- plot_grid(
+  spatial_rate_map,
+  spatial_lisa_map,
+  ncol = 1,
+  labels = c("a", "b"),
+  label_size = 12,
+  rel_heights = c(1, 1)
+)
+
+print(spatial_clustering_figure)
+
+#ggsave(
+#  filename = file.path(
+#    "Figures_Final",
+#    "SpatialClusteringSensitivity.png"
+#  ),
+#  plot = spatial_clustering_figure,
+#  width = 12,
+#  height = 8,
+#  units = "in",
+#  dpi = 300,
+#  bg = "white"
+#)
 ```
