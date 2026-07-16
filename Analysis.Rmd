@@ -402,8 +402,6 @@ For our histogram approximation of the PDF, we use Sturges's Rule to choose $K$,
 #Define a function that provides a histogram approximation of a PDF with K bins. Here, we use Sturges's Rule for K.
 PDF_approx <- function(x, K = ceiling(log2(length(x))) + 1) {
   p <- table(cut(x, breaks = K)) / length(x)
-  sigma2 <- sum((1:K) ^ 2 * p) - sum((1:K) * p) ^ 2
-  #p <- p[(p > 0)]
   return(p)
 }
 ```
@@ -2378,8 +2376,6 @@ end_of_month_indices <- c(which(day(filled$Date) == 1)[-1] - 1, nrow(filled_modi
 # Create a new negent function that provides debugging information when NAs are present
 negent_new <- function (x, K = ceiling(log2(length(x))) + 1){ # K = number of bins
   p <- table(cut(x, breaks = K))/length(x)
-  sigma2 <- var(x)
-  #p <- p[(p > 0)]
   bins <- seq(min(x), max(x), length.out = K + 1)
   bins2 <- rep(0, K)
   for(i in 1:K){
@@ -2402,15 +2398,12 @@ negent_new <- function (x, K = ceiling(log2(length(x))) + 1){ # K = number of bi
     print(paste("y had an NA", y))
   }
   return(KL_new(as.numeric(p), y))
-  #return(log(2 * pi * exp(1)*sigma2)*1/2 + sum(p * log(p)))
 }
 
 # Create a modified PDF approximation function that adds a small epsilon to avoid NAs
 PDF_approx_new <- function (x, K = ceiling(log2(length(x))) + 1, epsilon = 1e-05){
   p <- table(cut(x+epsilon, breaks = K))/length(x)
-  #p <- p[(p > 0)]
   return(p)
-  #return(log(2 * pi * exp(1)*sigma2)*1/2 + sum(p * log(p)))
 }
 ```
 
@@ -3185,7 +3178,7 @@ Compare KL Divergence estimates from the three methods:
 
 ```{r compare KL divergence estimates of binning methods}
 plot_df <- as.data.frame(cbind(KDE_shannon_PDF_vec, KDE_max_entropy_vec, FD_shannon_PDF_vec, FD_max_entropy_vec, SR_shannon_PDF_vec, SR_max_entropy_vec, filled$Date))
-plot_df %>% ggplot(aes(x = filled$Date, y = SR_max_entropy_vec - SR_shannon_PDF_vec)) +
+binning_comparison_figure <- ggplot(data = plot_df, aes(x = filled$Date, y = SR_max_entropy_vec - SR_shannon_PDF_vec)) +
   geom_line() +
   geom_line(aes(x = filled$Date, y = rep(0, nrow(filled_modified))), col = "red") +
   geom_line(aes(x = filled$Date, y = FD_max_entropy_vec - FD_shannon_PDF_vec), col = "orange", alpha = 0.5) +
@@ -3201,6 +3194,14 @@ plot_df %>% ggplot(aes(x = filled$Date, y = SR_max_entropy_vec - SR_shannon_PDF_
     plot.title = element_text(size = 12)
   ) +
   labs(y = "Negentropy (nats)", x = "Date", title = "Negentropy")
+ggsave(filename = file.path(
+    "Figures_Final_v2",
+    "SuppFig11.png"
+  ),
+  plot = binning_comparison_figure,
+  width = 2100,
+  height = 1500,
+  units = "px")
 ```
 
 ## Dynamic Parish Populations
@@ -3224,7 +3225,7 @@ print(match(min(num_zeroes), num_zeroes))
 print(match(as.Date("1630-09-01", format = "%Y-%m-%d"), filled_modified$Date))
 
 # After manually going through the data, day 637 is when the number of deaths rises above the levels reached in the secondary wave.
-new_start_date <- 609 #Set this as 1 if we want to start on January 1, 1629
+new_start_date <- 1 #Set this as 1 if we want to start on January 1, 1629
 ```
 
 To distinguish between entropy increasing due to the first instance of a case in a parish and the overall distribution approaching uniformity, we identify the first day after our new start date that all parishes have at least one case.
@@ -3247,19 +3248,24 @@ print(which(colSums(filled_modified[new_start_date:(non_zero_parish_day - 60),-1
 
 # What parishes have no cases up to the start of the outbreak?
 
-print(colSums(filled_modified[1:609, -1]) == 0)
+print(which(colSums(filled_modified[1:609, -1]) == 0))
 
 # What parishes have no new cases the day the outbreak starts?
 
 print(which(filled_modified[637, -1] == 0))
 ```
 
-Let's temporarily remove all of the parishes that don't have any cases 30 days after the start of the epidemic to eliminate this as a factor.
+If we're starting at the epidemic, remove all of the parishes that don't have any cases 30 days after the start of the epidemic to eliminate the possibility that entropy increases simply because parishes with zero cases get their first case.
 
 ```{r new filled_modified}
-outliers_temporary <- c("S.Polo", "S.Stae", "S.Marco", "S.Basso", "S.Pantalon", "S.Silvestro", "S.Simon.Grande", "S.Toma", "S.Severo")
-filled_modified_temporary <- filled[, !(colnames(filled) %in% outliers_temporary)]
-population_specified_modified_temporary <- population_specified[!(population_specified$Parish %in% outliers_temporary),]
+if(new_start_date != 1){
+  outliers_temporary <- c("S.Polo", "S.Stae", "S.Marco", "S.Basso", "S.Pantalon", "S.Silvestro", "S.Simon.Grande", "S.Toma", "S.Severo")
+  filled_modified_temporary <- filled[, !(colnames(filled) %in% outliers_temporary)]
+  population_specified_modified_temporary <- population_specified[!(population_specified$Parish %in% outliers_temporary),]
+} else {
+  filled_modified_temporary <- filled_modified
+  population_specified_modified_temporary <- population_specified_modified
+}
 ```
 
 Now what's the first day where no parish has zero cases starting from our new start date?
@@ -3277,88 +3283,371 @@ for(i in new_start_date:nrow(filled_modified_temporary)){
 }
 ```
 
-Non-dynamic populations (baseline).
+Define function to compare dynamic and non-dynamic parish populations.
 
 ```{r non-dynamic parish populations}
-instantaneous_mortality_df <- as.data.frame(matrix(NA_real_, nrow = nrow(filled_modified_temporary), ncol = ncol(filled_modified_temporary) - 1))
-
-shannonPDF_vec <- rep(0, nrow(filled_modified_temporary))
-shannonQuantile_vec <- rep(0, nrow(filled_modified_temporary))
-negentPDF_vec <- rep(0, nrow(filled_modified_temporary))
-uniformKL_Quantile_vec <- rep(0, nrow(filled_modified_temporary))
-
-for(i in new_start_date:nrow(filled_modified_temporary)){
-  instantaneous_cv <- filled_modified_temporary[i, -1] / (population_specified_modified_temporary$Population * 1000)
-  instantaneous_mortality_df[i, ] <- instantaneous_cv
-  
-  cumulative_cv <- colSums(instantaneous_mortality_df[new_start_date:i,])
-  cumulative_cv <- sort(cumulative_cv)
+dynamic_population_comparison <-
+  function(death_data,
+           population_data,
+           start_date,
+           dynamic = FALSE) {
     
-  # Normalized case vector (cumulative_cv_norm): quantile function
-  cumulative_cv_norm <- cumulative_cv / sum(cumulative_cv)
-  
-  kde_output_vec_2 <- kde_entropy(cumulative_cv)
+    instantaneous_mortality_df <-
+      as.data.frame(matrix(
+        NA_real_,
+        nrow = nrow(death_data),
+        ncol = ncol(death_data) - 1
+      ))
     
-  shannon_PDF <- kde_output_vec_2[1]
-  max_entropy_PDF <- kde_output_vec_2[2]
-  
-  shannon_quantile <- -1 * sum(cumulative_cv_norm[cumulative_cv_norm != 0] * log(cumulative_cv_norm[cumulative_cv_norm != 0]))
+    population_data_copy <- population_data
     
-  negent_PDF <- max_entropy_PDF - shannon_PDF
-  
-  uniform_KL_quantile <- KL_new(cumulative_cv_norm, rep(1 / length(cumulative_cv_norm), length(cumulative_cv_norm)))
-
-  shannonPDF_vec[i] <- shannon_PDF
-  shannonQuantile_vec[i] <- shannon_quantile
-  negentPDF_vec[i] <- negent_PDF
-  uniformKL_Quantile_vec[i] <- uniform_KL_quantile
-}
+    shannonPDF_vec <- rep(NA_real_, nrow(death_data))
+    shannonNormal_vec <- rep(NA_real_, nrow(death_data))
+    shannonQuantile_vec <- rep(NA_real_, nrow(death_data))
+    negentPDF_vec <- rep(NA_real_, nrow(death_data))
+    uniformKL_Quantile_vec <- rep(NA_real_, nrow(death_data))
+    
+    for (i in start_date:nrow(death_data)) {
+      instantaneous_cv <-
+        death_data[i,-1] / (population_data_copy$Population * 1000)
+      instantaneous_mortality_df[i,] <- instantaneous_cv
+      
+      cumulative_cv <-
+        colSums(instantaneous_mortality_df[start_date:i, ])
+      cumulative_cv <- sort(cumulative_cv)
+      
+      # Normalized case vector (cumulative_cv_norm): quantile function
+      cumulative_cv_norm <- cumulative_cv / sum(cumulative_cv)
+      
+      histogram_normal <- normal_approx(cumulative_cv_norm)
+      histogram_normal_entropy <-
+        -1 * sum(histogram_normal * log(histogram_normal))
+      
+      kern <- PDF_approx(cumulative_cv)
+      kern <- kern / sum(kern)
+      
+      shannon_PDF <- -1 * sum(kern[kern != 0] * log(kern[kern != 0]))
+      
+      kde_output_vec_2 <- kde_entropy(cumulative_cv)
+      
+      differential_entropy_PDF <- kde_output_vec_2[1]
+      max_entropy_PDF <- kde_output_vec_2[2]
+      
+      shannon_quantile <-
+        -1 * sum(cumulative_cv_norm[cumulative_cv_norm != 0] * log(cumulative_cv_norm[cumulative_cv_norm != 0]))
+      
+      negent_PDF <- max_entropy_PDF - differential_entropy_PDF
+      
+      uniform_KL_quantile <-
+        KL_new(cumulative_cv_norm, rep(
+          1 / length(cumulative_cv_norm),
+          length(cumulative_cv_norm)
+        ))
+      
+      if (dynamic) {
+        population_data_copy $Population <-
+          population_data_copy$Population - (as.numeric(death_data[i, -1]) / 1000)
+      }
+      
+      shannonPDF_vec[i] <- shannon_PDF
+      shannonNormal_vec[i] <- histogram_normal_entropy
+      shannonQuantile_vec[i] <- shannon_quantile
+      negentPDF_vec[i] <- negent_PDF
+      uniformKL_Quantile_vec[i] <- uniform_KL_quantile
+    }
+    return(
+      list(
+        shannonPDF = shannonPDF_vec,
+        shannonNormal = shannonNormal_vec,
+        shannonQuantile = shannonQuantile_vec,
+        negentPDF = negentPDF_vec,
+        uniformKL_Quantile = uniformKL_Quantile_vec
+      )
+    )
+  }
 ```
 
-Dynamic populations.
+Compare statistics when analyzing the data starting on January 1, 1629 (first day in dataset) vs. the data starting on September 1, 1630 (first day of primary outbreak).
 
-```{r dynamic parish populations}
-population_specified_dynamic <- population_specified_modified_temporary
-instantaneous_dynamic_mortality_df <- as.data.frame(matrix(NA_real_, nrow = nrow(filled_modified_temporary), ncol = ncol(filled_modified_temporary) - 1))
+```{r compare start dates}
+remove_zero_parishes <- FALSE
 
-shannonPDF_dynamic_vec <- rep(NA_real_, nrow(filled_modified_temporary))
-shannonQuantile_dynamic_vec <- rep(NA_real_, nrow(filled_modified_temporary))
-negentPDF_dynamic_vec <- rep(NA_real_, nrow(filled_modified_temporary))
-uniformKL_Quantile_dynamic_vec <- rep(NA_real_, nrow(filled_modified_temporary))
-
-for(i in new_start_date:nrow(filled_modified_temporary)){
-  instantaneous_cv <- filled_modified_temporary[i, -1] / (population_specified_dynamic$Population * 1000)
-  instantaneous_dynamic_mortality_df[i, ] <- instantaneous_cv
-  
-  cumulative_cv <- colSums(instantaneous_dynamic_mortality_df[new_start_date:i,])
-  cumulative_cv <- sort(cumulative_cv)
-    
-  # Normalized case vector (cumulative_cv_norm): quantile function
-  cumulative_cv_norm <- cumulative_cv / sum(cumulative_cv)
-  
-  kde_output_vec_2 <- kde_entropy(cumulative_cv)
-    
-  shannon_PDF <- kde_output_vec_2[1]
-  max_entropy_PDF <- kde_output_vec_2[2]
-  
-  shannon_quantile <- -1 * sum(cumulative_cv_norm[cumulative_cv_norm != 0] * log(cumulative_cv_norm[cumulative_cv_norm != 0]))
-    
-  negent_PDF <- max_entropy_PDF - shannon_PDF
-  
-  uniform_KL_quantile <- KL_new(cumulative_cv_norm, rep(1 / length(cumulative_cv_norm), length(cumulative_cv_norm)))
-
-  shannonPDF_dynamic_vec[i] <- shannon_PDF
-  shannonQuantile_dynamic_vec[i] <- shannon_quantile
-  negentPDF_dynamic_vec[i] <- negent_PDF
-  uniformKL_Quantile_dynamic_vec[i] <- uniform_KL_quantile
-  
-  population_specified_dynamic$Population <- population_specified_dynamic$Population - (as.numeric(filled_modified_temporary[i,-1]) / 1000)
+if(remove_zero_parishes){
+  outliers_temporary <- c("S.Polo", "S.Stae", "S.Marco", "S.Basso", "S.Pantalon", "S.Silvestro", "S.Simon.Grande", "S.Toma", "S.Severo")
+  filled_modified_temporary <- filled[, !(colnames(filled) %in% outliers_temporary)]
+  population_specified_modified_temporary <- population_specified[!(population_specified$Parish %in% outliers_temporary),]
+} else{
+  filled_modified_temporary <- filled_modified
+  population_specified_modified_temporary <- population_specified_modified_temporary
 }
+
+fixed_january_start <- dynamic_population_comparison(death_data = filled_modified_temporary, #should be filled_modified for the january, just trying something
+           population_data = population_specified_modified_temporary, #should be population_specified_modified for the january, just trying something
+           start_date = 1,
+           dynamic = FALSE)
+
+dynamic_january_start <- dynamic_population_comparison(death_data = filled_modified_temporary,
+           population_data = population_specified_modified_temporary,
+           start_date = 1,
+           dynamic = TRUE)
+
+new_start_date <- 609
+
+fixed_outbreak_start <- dynamic_population_comparison(death_data = filled_modified_temporary,
+           population_data = population_specified_modified_temporary,
+           start_date = new_start_date,
+           dynamic = FALSE)
+
+dynamic_outbreak_start <- dynamic_population_comparison(death_data = filled_modified_temporary,
+           population_data = population_specified_modified_temporary,
+           start_date = new_start_date,
+           dynamic = TRUE)
 ```
 
-Plot the results.
+Create quantile function entropy plot and PDF negentropy plot starting on January 1, 1629.
 
-```{r plot dynamic parish populations}
+```{r plot dynamic population starting in january}
+# Initialize dataframe with 2.5th percentile value, 97.5th percentile value, and original value of shannonQuantile
+plot_df <-
+  as.data.frame(
+    cbind(
+      fixed_january_start$shannonQuantile,
+      dynamic_january_start$shannonQuantile
+    )
+  )
+colnames(plot_df) <- c("fixed", "dynamic")
+
+plot1 <- ggplot(data = plot_df, aes(x = filled$Date)) +
+  geom_line(aes(y = fixed, color = "Fixed")) +
+  geom_line(aes(y = dynamic), color = "Dynamic") + 
+  geom_hline(yintercept = log(
+    ncol(filled_modified[, -1])
+  ), col = "red") +
+  coord_cartesian(ylim = c(3.5, 3.9)) +
+  # coord_cartesian(ylim=c(3.5,3.95))+ #S. Marco
+  scale_color_manual(
+    name = "Population",
+    values = c(
+      "Dynamic" = "blue",
+      "Fixed" = "black"
+    )
+  ) +
+  scale_x_date(date_breaks = "12 months", date_labels = "%m-%Y") +
+  scale_y_continuous(
+    name = "Entropy (nats)",
+    sec.axis = sec_axis( #create second y-axis for effective number of parishes
+      trans =  ~ .,
+      name = "Effective Number",
+      labels = function(x)
+        scales::comma(round(exp(x)), accuracy = 1)
+    )
+  ) +
+  theme_bw() +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.background = element_blank(),
+    plot.background = element_rect(fill = "white"),
+    axis.title = element_text(size = 10),
+    plot.title = element_text(size = 12),
+    legend.position = "bottom"
+  ) +
+  labs(y = "Entropy (nats)", x = "Date", title = "Entropy of invCDF")
+
+# Initialize dataframe containing 2.5th percentile values, 97.5th percentile values, and observed values of the negentropy of the PDF
+plot_df_2 <-
+  as.data.frame(
+    cbind(
+      fixed_january_start$negentPDF,
+      dynamic_january_start$negentPDF
+    )
+  )
+colnames(plot_df_2) <- c("fixed", "dynamic")
+
+plot2 <- ggplot(data = plot_df_2, aes(x = filled$Date)) +
+  geom_line(aes(y = fixed, color = "Fixed")) +
+  geom_line(aes(y = dynamic, color = "Dynamic")) +
+  geom_hline(yintercept = 0, col = "red") +
+  coord_cartesian(ylim = c(0, 0.45)) +
+  # coord_cartesian(ylim=c(0,1.5))+ #S. Marco
+  scale_x_date(date_breaks = "12 months", date_labels = "%m-%Y") +
+  scale_y_continuous() +
+  scale_color_manual(
+    name = "Population",
+    values = c(
+      "Dynamic" = "blue",
+      "Fixed" = "black"
+    )
+  ) +
+  theme_bw() +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.background = element_blank(),
+    plot.background = element_rect(fill = "white"),
+    axis.title = element_text(size = 10),
+    plot.title = element_text(size = 12),
+    legend.position = "bottom"
+  ) +
+  labs(y = "Negentropy (nats)", x = "Date", title = "Negentropy of PDF")
+
+# Order such that invCDF entropy graph is on the left and PDF negentropy graph is on the right
+plot_ls <- list(plot1, plot2)
+
+# Create grid
+untitled_grid <-
+  plot_grid(plotlist = plot_ls,
+            labels = c("a", "b"),
+            label_size = 12)
+# now add the title
+title <- ggdraw() +
+  draw_label(
+    "Starting on January 1, 1629",
+    fontface = 'bold',
+    x = 0,
+    hjust = 0
+  ) +
+  theme(# add margin on the left of the drawing canvas,
+    # so title is aligned with left edge of first plot
+    plot.margin = margin(0, 0, 0, 7))
+dynamic_comparison_starting_on_january_figure <- plot_grid(title,
+          untitled_grid,
+          ncol = 1,
+          # rel_heights values control vertical title margins
+          rel_heights = c(0.1, 1))
+print(dynamic_comparison_starting_on_january_figure)
+
+ggsave(
+  filename = file.path(
+    "Figures_Final_v2",
+    "SuppFig9.png"
+  ),
+  plot = dynamic_comparison_starting_on_january_figure,
+  width = 12,
+  height = 8,
+  units = "in",
+  dpi = 300,
+  bg = "white"
+)
+```
+
+Create quantile function entropy plot and PDF negentropy plot starting on September 1, 1630.
+
+```{r plot dynamic population starting at outbreak}
+# Initialize dataframe with 2.5th percentile value, 97.5th percentile value, and original value of shannonQuantile
+plot_df <-
+  as.data.frame(
+    cbind(
+      fixed_outbreak_start$shannonQuantile,
+      dynamic_outbreak_start$shannonQuantile
+    )
+  )
+colnames(plot_df) <- c("fixed", "dynamic")
+
+plot1 <- ggplot(data = plot_df, aes(x = filled$Date, y = fixed)) +
+  geom_line() +
+  geom_line(aes(y = dynamic), col = "blue") + 
+  geom_hline(yintercept = log(
+    ncol(filled_modified_temporary[, -1])
+  ), col = "red") +
+  geom_vline(xintercept = as.numeric(as.Date("1629-01-01") + non_zero_parish_day), col = "red") +
+  coord_cartesian(ylim = c(3.5, 3.9), xlim = c(as.Date("1630-09-01"), as.Date("1631-12-31"))) +
+  # coord_cartesian(ylim=c(3.5,3.95))+ #S. Marco
+  scale_x_date(date_breaks = "6 months", date_labels = "%m-%Y") +
+  scale_y_continuous(
+    name = "Entropy (nats)",
+    sec.axis = sec_axis( #create second y-axis for effective number of parishes
+      trans =  ~ .,
+      name = "Effective Number",
+      labels = function(x)
+        scales::comma(round(exp(x)), accuracy = 1)
+    )
+  ) +
+  theme_bw() +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.background = element_blank(),
+    plot.background = element_rect(fill = "white"),
+    axis.title = element_text(size = 10),
+    plot.title = element_text(size = 12)
+  ) +
+  labs(y = "Entropy (nats)", x = "Date", title = "Entropy of invCDF")
+
+# Initialize dataframe containing 2.5th percentile values, 97.5th percentile values, and observed values of the negentropy of the PDF
+plot_df_2 <-
+  as.data.frame(
+    cbind(
+      fixed_outbreak_start$negentPDF,
+      dynamic_outbreak_start$negentPDF
+    )
+  )
+colnames(plot_df_2) <- c("fixed", "dynamic")
+
+plot2 <- ggplot(data = plot_df_2, aes(x = filled$Date, y = fixed)) +
+  geom_line() +
+  geom_line(aes(y = dynamic), col = "blue") +
+  geom_hline(yintercept = 0, col = "red") +
+  geom_vline(xintercept = as.numeric(as.Date("1629-01-01") + non_zero_parish_day), col = "red") +
+  coord_cartesian(ylim = c(0, 0.2), xlim = c(as.Date("1630-09-01"), as.Date("1631-12-31"))) +
+  # coord_cartesian(ylim=c(0,1.5))+ #S. Marco
+  scale_x_date(date_breaks = "6 months", date_labels = "%m-%Y") +
+  scale_y_continuous() +
+  theme_bw() +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.background = element_blank(),
+    plot.background = element_rect(fill = "white"),
+    axis.title = element_text(size = 10),
+    plot.title = element_text(size = 12)
+  ) +
+  labs(y = "Negentropy (nats)", x = "Date", title = "Negentropy of PDF")
+
+# Order such that invCDF entropy graph is on the left and PDF negentropy graph is on the right
+plot_ls <- list(plot1, plot2)
+
+# Create the grid 
+untitled_grid <-
+  plot_grid(plotlist = plot_ls,
+            labels = c("a", "b"),
+            label_size = 12)
+
+# Add the title
+title <- ggdraw() +
+  draw_label(
+    "Starting on September 1, 1630",
+    fontface = 'bold',
+    x = 0,
+    hjust = 0
+  ) +
+  theme(# add margin on the left of the drawing canvas,
+    # so title is aligned with left edge of first plot
+    plot.margin = margin(0, 0, 0, 7))
+
+dynamic_comparison_starting_on_outbreak_figure <- plot_grid(title,
+          untitled_grid,
+          ncol = 1,
+          # rel_heights values control vertical title margins
+          rel_heights = c(0.1, 1))
+
+print(dynamic_comparison_starting_on_outbreak_figure)
+
+#ggsave(
+#  filename = file.path(
+#    "Figures_Final_v2",
+#    "SuppFig10.png"
+#  ),
+#  plot = dynamic_populations_PDF_figure,
+#  width = 2100,
+#  height = 1200,
+#  units = "px"
+#)
+```
+
+Generate rough plots.
+
+```{r plot dynamic parish populations, eval = FALSE}
 plot.ts(shannonPDF_vec, xlim = c(new_start_date, nrow(filled_modified_temporary)), ylim = c(-7, 0))
 abline(v = non_zero_parish_day)
 lines(shannonPDF_dynamic_vec, col = "red")
@@ -4138,16 +4427,16 @@ spatial_clustering_figure <- plot_grid(
 
 print(spatial_clustering_figure)
 
-#ggsave(
-#  filename = file.path(
-#    "Figures_Final",
-#    "SpatialClusteringSensitivity.png"
-#  ),
-#  plot = spatial_clustering_figure,
-#  width = 12,
-#  height = 8,
-#  units = "in",
-#  dpi = 300,
-#  bg = "white"
-#)
+ggsave(
+  filename = file.path(
+    "Figures_Final_v2",
+    "SuppFig8.png"
+  ),
+  plot = spatial_clustering_figure,
+  width = 12,
+  height = 8,
+  units = "in",
+  dpi = 300,
+  bg = "white"
+)
 ```
