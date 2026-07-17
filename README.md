@@ -23,7 +23,6 @@ All analyses were run using R version 4.2.0 (2022-04-22) on Mac OS Monterey (12.
 
 * You can download and install R from CRAN: https://cran.r-project.org
 * You can download and install RStudio from their website: https://www.rstudio.com
-* All R packages required to run the analyses are sourced in the file ```00-pkg-config.R```.
 The installation time should be < 10 minutes total on a typical desktop computer.
 To reproduce all analyses in the paper, we recommend that you:
 
@@ -33,11 +32,7 @@ Recreate the exact package environment using the ```renv``` package.
 
 You can do this by opening the R project file (VenetianPlague_Entropy.Rproj) in RStudio, loading the ```renv``` package, and typing ```renv::restore()``` to restore the package environment from the projects ```renv.lock``` file.
 
-Download the public data from the OSF repository by running the script ```00-download-public-data.R```.
-
-All of the analysis scripts can be run sequentially using the script ```run-all.R```.
-
 ## Contents
 
-* The main analysis:
+* The main analysis: [Analysis.Rmd](Analysis.Rmd)
 * Exploratory analysis:
