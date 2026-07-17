@@ -3178,11 +3178,20 @@ Compare KL Divergence estimates from the three methods:
 
 ```{r compare KL divergence estimates of binning methods}
 plot_df <- as.data.frame(cbind(KDE_shannon_PDF_vec, KDE_max_entropy_vec, FD_shannon_PDF_vec, FD_max_entropy_vec, SR_shannon_PDF_vec, SR_max_entropy_vec, filled$Date))
-binning_comparison_figure <- ggplot(data = plot_df, aes(x = filled$Date, y = SR_max_entropy_vec - SR_shannon_PDF_vec)) +
-  geom_line() +
-  geom_line(aes(x = filled$Date, y = rep(0, nrow(filled_modified))), col = "red") +
-  geom_line(aes(x = filled$Date, y = FD_max_entropy_vec - FD_shannon_PDF_vec), col = "orange", alpha = 0.5) +
-  geom_line(aes(x = filled$Date, y = KDE_max_entropy_vec - KDE_shannon_PDF_vec), color = "blue", alpha = 0.5) +
+
+binning_comparison_figure <- ggplot(data = plot_df, aes(x = filled$Date)) +
+  geom_line(aes(y = SR_max_entropy_vec - SR_shannon_PDF_vec, col = "Sturges")) +
+  geom_hline(yintercept = 0, col = "red") +
+  geom_line(aes(y = FD_max_entropy_vec - FD_shannon_PDF_vec, col = "Freedman-Diaconis"), alpha = 0.5) +
+  geom_line(aes(y = KDE_max_entropy_vec - KDE_shannon_PDF_vec, color = "KDE"), alpha = 0.5) +
+  scale_color_manual(
+    name = "Binning Rule", 
+    values = c(
+      "Sturges" = "black",
+      "Freedman-Diaconis" = "orange", 
+      "KDE" = "blue"
+      )
+    ) +
   scale_x_date(date_breaks = "12 months", date_labels = "%m-%Y") +
   theme_bw() +
   theme(
@@ -3191,12 +3200,13 @@ binning_comparison_figure <- ggplot(data = plot_df, aes(x = filled$Date, y = SR_
     panel.background = element_blank(),
     plot.background = element_rect(fill = "white"),
     axis.title = element_text(size = 10),
-    plot.title = element_text(size = 12)
+    plot.title = element_text(size = 12),
+    legend.position = "bottom"
   ) +
   labs(y = "Negentropy (nats)", x = "Date", title = "Negentropy")
 ggsave(filename = file.path(
     "Figures_Final_v2",
-    "SuppFig11.png"
+    "SuppFig10.png"
   ),
   plot = binning_comparison_figure,
   width = 2100,
@@ -3419,12 +3429,10 @@ colnames(plot_df) <- c("fixed", "dynamic")
 
 plot1 <- ggplot(data = plot_df, aes(x = filled$Date)) +
   geom_line(aes(y = fixed, color = "Fixed")) +
-  geom_line(aes(y = dynamic), color = "Dynamic") + 
+  geom_line(aes(y = dynamic, color = "Dynamic")) + 
   geom_hline(yintercept = log(
     ncol(filled_modified[, -1])
   ), col = "red") +
-  coord_cartesian(ylim = c(3.5, 3.9)) +
-  # coord_cartesian(ylim=c(3.5,3.95))+ #S. Marco
   scale_color_manual(
     name = "Population",
     values = c(
@@ -3432,6 +3440,8 @@ plot1 <- ggplot(data = plot_df, aes(x = filled$Date)) +
       "Fixed" = "black"
     )
   ) +
+  coord_cartesian(ylim = c(3.5, 3.9)) +
+  # coord_cartesian(ylim=c(3.5,3.95))+ #S. Marco
   scale_x_date(date_breaks = "12 months", date_labels = "%m-%Y") +
   scale_y_continuous(
     name = "Entropy (nats)",
@@ -3468,10 +3478,6 @@ plot2 <- ggplot(data = plot_df_2, aes(x = filled$Date)) +
   geom_line(aes(y = fixed, color = "Fixed")) +
   geom_line(aes(y = dynamic, color = "Dynamic")) +
   geom_hline(yintercept = 0, col = "red") +
-  coord_cartesian(ylim = c(0, 0.45)) +
-  # coord_cartesian(ylim=c(0,1.5))+ #S. Marco
-  scale_x_date(date_breaks = "12 months", date_labels = "%m-%Y") +
-  scale_y_continuous() +
   scale_color_manual(
     name = "Population",
     values = c(
@@ -3479,6 +3485,10 @@ plot2 <- ggplot(data = plot_df_2, aes(x = filled$Date)) +
       "Fixed" = "black"
     )
   ) +
+  coord_cartesian(ylim = c(0, 0.45)) +
+  # coord_cartesian(ylim=c(0,1.5))+ #S. Marco
+  scale_x_date(date_breaks = "12 months", date_labels = "%m-%Y") +
+  scale_y_continuous() +
   theme_bw() +
   theme(
     panel.grid.major = element_blank(),
@@ -3491,18 +3501,28 @@ plot2 <- ggplot(data = plot_df_2, aes(x = filled$Date)) +
   ) +
   labs(y = "Negentropy (nats)", x = "Date", title = "Negentropy of PDF")
 
+# Goal: Condense the two legends into a single one
+
+# Obtain the shared legend
+shared_legend <- get_legend(plot1)
+
+# Remove the legends from individual plots
+plot1_clean <- plot1 + theme(legend.position = "none")
+plot2_clean <- plot2 + theme(legend.position = "none")
+
 # Order such that invCDF entropy graph is on the left and PDF negentropy graph is on the right
-plot_ls <- list(plot1, plot2)
+plot_ls <- list(plot1_clean, plot2_clean)
 
 # Create grid
 untitled_grid <-
   plot_grid(plotlist = plot_ls,
             labels = c("a", "b"),
             label_size = 12)
+
 # now add the title
 title <- ggdraw() +
   draw_label(
-    "Starting on January 1, 1629",
+    "Entropy of invCDF and Negentropy of PDF",
     fontface = 'bold',
     x = 0,
     hjust = 0
@@ -3510,11 +3530,14 @@ title <- ggdraw() +
   theme(# add margin on the left of the drawing canvas,
     # so title is aligned with left edge of first plot
     plot.margin = margin(0, 0, 0, 7))
+
 dynamic_comparison_starting_on_january_figure <- plot_grid(title,
           untitled_grid,
+          shared_legend,
           ncol = 1,
           # rel_heights values control vertical title margins
-          rel_heights = c(0.1, 1))
+          rel_heights = c(0.1, 1, 0.1))
+
 print(dynamic_comparison_starting_on_january_figure)
 
 ggsave(
@@ -3645,6 +3668,8 @@ print(dynamic_comparison_starting_on_outbreak_figure)
 #)
 ```
 
+When we start on January 1, 1629, the change in quantile function entropy after the outbreak is mitigated. Intuitively, this makes sense: deaths before the start of the outbreak were likely randomly distributed; thus, the distribution of cumulative mortality likely already reached close to maximum entropy. However, when we start at the beginning of the epidemic, adjusting population estimates by deaths no longer has a large impact. 
+
 Generate rough plots.
 
 ```{r plot dynamic parish populations, eval = FALSE}
@@ -3668,8 +3693,6 @@ abline(v = non_zero_parish_day)
 lines(uniformKL_Quantile_dynamic_vec, col = "red")
 lines(rowSums(filled_modified_temporary[,-1])/2000, col = "blue")
 ```
-
-When we start on January 1, 1629, the change in quantile function entropy after the outbreak is mitigated. Intuitively, this makes sense: deaths before the start of the outbreak were likely randomly distributed; thus, the distribution of cumulative mortality likely already reached close to maximum entropy. However, when we start at the beginning of the epidemic, adjusting population estimates by deaths no longer has a large impact. 
 
 ## Sinusoidal Baseline and Plague-Related Excess Mortality
 
