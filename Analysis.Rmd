@@ -2369,7 +2369,7 @@ In this section, we will generate the PDF and Quantile Graphs included in Figure
 
 First, we define our functions.
 
-```{r PDF_and_Quantile_graphs, eval = FALSE}
+```{r PDF_and_Quantile_graphs}
 # Find the indices in filled$Date of the last day of every month
 end_of_month_indices <- c(which(day(filled$Date) == 1)[-1] - 1, nrow(filled_modified))
 
@@ -2409,7 +2409,7 @@ PDF_approx_new <- function (x, K = ceiling(log2(length(x))) + 1, epsilon = 1e-05
 
 While we use histogram approximation of the PDF with bin number determined by Sturges' rule in the analysis, for the purposes of illustration we use an Epanechnikov kernel with 512 bins in this figure.
 
-```{r PDF_epanechnikov, eval = FALSE}
+```{r PDF_epanechnikov}
 # Define the PDF approximation function using an Epanechnikov kernel of 512 bins
 PDF_approx_epanechnikov <- function (cv){
   #kern <- density(cv,n=512,from=0,to=max(cv),kernel="epanechnikov",bw="bcv")$y
@@ -2417,7 +2417,11 @@ PDF_approx_epanechnikov <- function (cv){
   kern <- kern / sum(kern)
   return(kern)
 }
+```
 
+Next, we define the function that generates the histogram-approximated normal distribution with the same mean and variance as the data.
+
+```{r define normal_approx}
 #----
 #' Documentation: normal_approx
 #' Usage: normal_approx(x, K)
@@ -2439,7 +2443,11 @@ normal_approx <- function (x, K = ceiling(log2(length(x))) + 1){
   y <- y / sum(y)
   return(y)
 }
+```
 
+Initialize the lists which will contain our graphs.
+
+```{r initialize figure 1 lists}
 #months_vec <- c(12,24,34)
 # Find the indices for 1) January 7, 1629, 2) October 31, 1630, and 3) December 31, 1631
 days_vec <- c(7, end_of_month_indices[22], end_of_month_indices[36])
@@ -2463,7 +2471,11 @@ load(file = "~/Downloads/plot_list7.RData")
 #   var_mean <- sd(case_vec)/mean(case_vec)
 #   plot(PDF_approx_epanechnikov(case_vec),main=paste(filled$Date[day],round(stats_of_whole_cumulative_50_2$negentPDF[day],4)))
 # }
+```
 
+Identify the bootstrapped 95% CIs for the coefficient of variation.
+
+```{r bootstrapped coefficient of variation}
 # Initialize matrix to calculate coefficient of variation and 95% CI using 999 resamplings
 coeff_var_mat <- matrix(NA, nrow = 999, ncol = 3)
 
@@ -2485,10 +2497,15 @@ sort(coeff_var_mat[,2], decreasing = FALSE)[25] #December 31, 1631 low
 sort(coeff_var_mat[,2], decreasing = FALSE)[975] #December 31, 1631 high
 sort(coeff_var_mat[,3], decreasing = FALSE)[25] #October 31, 1630 low
 sort(coeff_var_mat[,3], decreasing = FALSE)[975] #October 31, 1630 high
+```
 
+Produce the graphs for the PDF and inverse CDF.
+
+```{r produce pdf and quantile graphs}
 for(i in days_vec){
   day <- i
   case_vec <- as.numeric(colSums(filled_modified[1:day,-1])) / (population_specified_modified$Population * 1000)
+  instantaneous_case_vec <- as.numeric(filled_modified[day, -1]) / (population_specified_modified$Population * 1000)
   var_mean <- sd(case_vec) / mean(case_vec)
   print(var_mean)
   case_vec_norm <- case_vec / sum(case_vec)
@@ -2572,7 +2589,7 @@ for(i in days_vec){
   max_ent_normal <- max_ent_normal / sum(max_ent_normal)
   pdf_df <- data.frame(x = bins3, y = pdf_vec_2, y2 = max_ent_normal)
   
-  # Increase y limits for the graph on January 6, 1629 for the same reason as before
+  # Increase y limits for the graph on January 7, 1629 for the same reason as before
   if(match(i, days_vec) == 1) {
     PDF_graph <- ggplot(data = pdf_df, aes(x = x, y = y)) +
       geom_density(
@@ -3391,15 +3408,19 @@ if(remove_zero_parishes){
   population_specified_modified_temporary <- population_specified_modified_temporary
 }
 
-fixed_january_start <- dynamic_population_comparison(death_data = filled_modified_temporary, #should be filled_modified for the january, just trying something
-           population_data = population_specified_modified_temporary, #should be population_specified_modified for the january, just trying something
+fixed_january_start <- dynamic_population_comparison(death_data = filled_modified_temporary, 
+           population_data = population_specified_modified_temporary,
            start_date = 1,
            dynamic = FALSE)
+
+print(fixed_january_start$shannonQuantile[nrow(filled_modified_temporary)])
 
 dynamic_january_start <- dynamic_population_comparison(death_data = filled_modified_temporary,
            population_data = population_specified_modified_temporary,
            start_date = 1,
            dynamic = TRUE)
+
+print(dynamic_january_start$shannonQuantile[nrow(filled_modified_temporary)])
 
 new_start_date <- 609
 
@@ -4462,4 +4483,43 @@ ggsave(
   dpi = 300,
   bg = "white"
 )
+```
+
+## Parish Population Estimation Method
+
+Main analysis uses per-parish linear interpolation. Two more methods:
+
+1. citywide regression
+2. estimate populations using 1624 sestiere population data and 1586 parish shares of sestiere population.
+
+```{r population estimates using sestiere proportion, eval = FALSE}
+populations_from_sest <- read.csv("parish_population_estimates_sestiere_proportion.csv") #1624 sestiere populations directly from a census multiplied by parish proportions in that sestiere from 1586 data
+
+colnames(populations_from_sest) <- c("Sestiere", "Parish", "Population_1586", 
+                              "Population_1696", "Population_1629_Regression", "Population_1629_Sestiere_Proportion", "Percent_Diff")
+
+# Remove space artifacts
+populations_from_sest$Parish <- gsub("[[:space:]]", ".", populations_from_sest$Parish)
+populations_from_sest$Parish <- sub("^S\\.", "S", populations_from_sest$Parish)
+
+# Remove diacritics
+populations_from_sest$Parish <- stri_trans_general(populations_from_sest$Parish, id = "Latin-ASCII")
+
+remove_vec <- c()
+for(i in 1:length(populations_from_sest$Parish)){
+  if(!(populations_from_sest$Parish[i] %in% population_post$Parish)){
+    remove_vec <- c(remove_vec,i)
+  }
+}
+
+if(length(remove_vec) > 0){
+  populations_from_sest <- populations_from_sest[-remove_vec,]
+}
+
+populations_from_sest <- populations_from_sest %>% arrange(Parish)
+
+population <- data.frame(population_post$Parish, as.numeric(populations_from_sest$Population_1629_Sestiere_Proportion) / 1000)
+colnames(population) <- c("Parish","Population")
+population_specified <- population[population$Parish %in% colnames(filled[,-1]),]
+population_specified <- population_specified[match(colnames(filled[,-1]), population_specified$Parish),]
 ```
