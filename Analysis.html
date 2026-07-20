@@ -2757,17 +2757,17 @@ for(i in 1:999) {
   }
 }
 sort(coeff_var_mat[,1], decreasing = FALSE)[25] #January 7, 1629 low</code></pre>
-<pre><code>## [1] 1.000487</code></pre>
+<pre><code>## [1] 1.006557</code></pre>
 <pre class="r"><code>sort(coeff_var_mat[,1], decreasing = FALSE)[975] #January 7, 1629 high</code></pre>
-<pre><code>## [1] 1.678249</code></pre>
+<pre><code>## [1] 1.681492</code></pre>
 <pre class="r"><code>sort(coeff_var_mat[,2], decreasing = FALSE)[25] #December 31, 1631 low</code></pre>
-<pre><code>## [1] 0.21543</code></pre>
+<pre><code>## [1] 0.2167786</code></pre>
 <pre class="r"><code>sort(coeff_var_mat[,2], decreasing = FALSE)[975] #December 31, 1631 high</code></pre>
-<pre><code>## [1] 0.3628171</code></pre>
+<pre><code>## [1] 0.3616105</code></pre>
 <pre class="r"><code>sort(coeff_var_mat[,3], decreasing = FALSE)[25] #October 31, 1630 low</code></pre>
-<pre><code>## [1] 0.1714714</code></pre>
+<pre><code>## [1] 0.1752209</code></pre>
 <pre class="r"><code>sort(coeff_var_mat[,3], decreasing = FALSE)[975] #October 31, 1630 high</code></pre>
-<pre><code>## [1] 0.2720313</code></pre>
+<pre><code>## [1] 0.2671958</code></pre>
 <p>Produce the graphs for the PDF and inverse CDF.</p>
 <pre class="r"><code>for(i in days_vec){
   day &lt;- i
@@ -3709,17 +3709,21 @@ if(remove_zero_parishes){
   population_specified_modified_temporary &lt;- population_specified_modified_temporary
 }
 
-fixed_january_start &lt;- dynamic_population_comparison(death_data = filled_modified_temporary, #should be filled_modified for the january, just trying something
-           population_data = population_specified_modified_temporary, #should be population_specified_modified for the january, just trying something
+fixed_january_start &lt;- dynamic_population_comparison(death_data = filled_modified_temporary, 
+           population_data = population_specified_modified_temporary,
            start_date = 1,
            dynamic = FALSE)
 
-dynamic_january_start &lt;- dynamic_population_comparison(death_data = filled_modified_temporary,
+print(fixed_january_start$shannonQuantile[nrow(filled_modified_temporary)])</code></pre>
+<pre><code>## [1] 3.886048</code></pre>
+<pre class="r"><code>dynamic_january_start &lt;- dynamic_population_comparison(death_data = filled_modified_temporary,
            population_data = population_specified_modified_temporary,
            start_date = 1,
            dynamic = TRUE)
 
-new_start_date &lt;- 609
+print(dynamic_january_start$shannonQuantile[nrow(filled_modified_temporary)])</code></pre>
+<pre><code>## [1] 3.872334</code></pre>
+<pre class="r"><code>new_start_date &lt;- 609
 
 fixed_outbreak_start &lt;- dynamic_population_comparison(death_data = filled_modified_temporary,
            population_data = population_specified_modified_temporary,
