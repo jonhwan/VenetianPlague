@@ -38,6 +38,9 @@ library(tmap)
 library(ggplotify)
 library(sf)
 library(stringi)
+library(openxlsx)
+library(av)
+
 sf_use_s2(FALSE)
 
 # Clear environment
@@ -73,6 +76,81 @@ Import csv files containing population data from Venetian censuses in 1509, 1551
 ```{r import_population_csvs}
 population_pre <- read.csv("ParishPopulationsPre.csv")
 population_post <- read.csv("ParishPopulationsPost.csv")
+```
+
+Initialize the plot theme, the color palette, and the workbook for the source data.
+
+```{r initialize plot theme}
+Okabe_Ito_palette <- c("#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#CC79A7")
+
+plot_theme <- function(base_family = "Helvetica", base_size = 7) {
+  theme_classic(
+    base_family = base_family,
+    base_size = base_size
+  ) +
+    theme(
+      # Text
+      text = element_text(
+        family = base_family,
+        color = "black"
+      ),
+      axis.title = element_text(
+        family = base_family,
+        size = 7,
+        color = "black"
+      ),
+      axis.text = element_text(
+        family = base_family,
+        size = 6,
+        color = "black"
+      ),
+      legend.title = element_text(
+        family = base_family,
+        size = 7
+      ),
+      legend.text = element_text(
+        family = base_family,
+        size = 6
+      ),
+
+      # Whole-figure titles should be in the manuscript legend
+      plot.title = element_blank(),
+
+      # Lines and ticks
+      axis.line = element_line(
+        color = "black",
+        linewidth = 0.3
+      ),
+      axis.ticks = element_line(
+        color = "black",
+        linewidth = 0.3
+      ),
+      axis.ticks.length = grid::unit(1.5, "mm"),
+
+      # Panels
+      panel.grid = element_blank(),
+      panel.border = element_blank(),
+      strip.background = element_blank(),
+      strip.text = element_text(
+        family = base_family,
+        size = 7,
+        face = "bold"
+      ),
+
+      # Layout
+      legend.key = element_blank(),
+      legend.position = "right",
+      plot.background = element_rect(
+        fill = "white",
+        color = NA
+      ),
+      plot.margin = margin(3, 3, 3, 3, unit = "mm")
+    )
+}
+
+# Initialize the workbook that will contain the source data for the figures
+
+wb <- createWorkbook()
 ```
 
 # Data Cleaning
@@ -288,9 +366,9 @@ population_df %>%
   ggplot(aes(x = Population_1586, y = Population_1696))+
   geom_point(size = 0.5)+
   geom_smooth(method = lm, se = FALSE, linewidth = 0.5)+
-  theme_bw()+
-  theme(text = element_text(family = ""), panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
-  labs(x = "Population in 1586", y = "Population in 1696", title = "Population in 1696 vs. Population in 1586")
+  theme_bw(base_family = "Helvetica", base_size = 7)+
+  labs(x = "Population in 1586", y = "Population in 1696", title = "Population in 1696 vs. Population in 1586") +
+  plot_theme()
 
 # Save as Supplementary Figure 6
 ggsave(
@@ -298,9 +376,9 @@ ggsave(
     "Figures_Final_v2",
     "SuppFig6.pdf"
   ),
-  width = 1920,
-  height = 1080,
-  units = "px",
+  width = 180,
+  height = 108,
+  units = "mm",
   bg = "white"
 )
 
@@ -1024,20 +1102,27 @@ Finally, we run our bootstrap!
 RNGkind("L'Ecuyer-CMRG")
 set.seed(123)
 
-stats_by_sestiere_boot_cumulative_50_2 <- shannonBySestiere_Bootstrapped(cumulative = TRUE) #w/ fixed negent
-stats_by_sestiere_boot_instantaneous_50_2 <- shannonBySestiere_Bootstrapped(cumulative = FALSE)
+#stats_by_sestiere_boot_cumulative_50_2 <- shannonBySestiere_Bootstrapped(cumulative = TRUE) #w/ fixed negent
+#stats_by_sestiere_boot_instantaneous_50_2 <- shannonBySestiere_Bootstrapped(cumulative = FALSE)
 stats_by_sestiere_cumulative_50_2 <- shannonBySestiere(cumulative = TRUE)
 stats_by_sestiere_instantaneous_50_2 <- shannonBySestiere(cumulative = FALSE)
 stats_of_whole_cumulative_50_2 <- whole_dataset_analysis(cumulative = TRUE) #default
 stats_of_whole_instantaneous_50_2 <- whole_dataset_analysis(cumulative = FALSE)
-stats_of_whole_boot_cumulative_50_2 <- whole_dataset_bootstrap(cumulative = TRUE)
-stats_of_whole_boot_instantaneous_50_2 <- whole_dataset_bootstrap(cumulative = FALSE)
+#stats_of_whole_boot_cumulative_50_2 <- whole_dataset_bootstrap(cumulative = TRUE)
+#stats_of_whole_boot_instantaneous_50_2 <- whole_dataset_bootstrap(cumulative = FALSE)
 
 # Save our bootstrap values to a separate document
-# saveRDS(stats_by_sestiere_boot_cumulative_50_2,"stats_by_sestiere_boot_cumulative_50_2.rds")
-# saveRDS(stats_by_sestiere_boot_instantaneous_50_2,"stats_by_sestiere_boot_instantaneous_50_2.rds")
-# saveRDS(stats_of_whole_boot_cumulative_50_2,"stats_of_whole_boot_cumulative_50_2.rds")
-# saveRDS(stats_of_whole_boot_instantaneous_50_2,"stats_of_whole_boot_instantaneous_50_2.rds")
+# saveRDS(stats_by_sestiere_boot_cumulative_50_2,"sestiere_boot_cumulative.rds")
+# saveRDS(stats_by_sestiere_boot_instantaneous_50_2,"sestiere_boot_instantaneous.rds")
+# saveRDS(stats_of_whole_boot_cumulative_50_2,"whole_boot_cumulative.rds")
+# saveRDS(stats_of_whole_boot_instantaneous_50_2,"whole_boot_instantaneous.rds")
+```
+
+```{r load bootstrapping results}
+stats_by_sestiere_boot_cumulative_50_2 <- readRDS("sestiere_boot_cumulative.rds")
+stats_by_sestiere_instantaneous_50_2 <- readRDS("sestiere_boot_instantaneous.rds")
+stats_of_whole_boot_cumulative_50_2 <- readRDS("whole_boot_cumulative.rds")
+stats_of_whole_boot_instantaneous_50_2 <- readRDS("whole_boot_instantaneous.rds")
 ```
 
 ## Evaluate Gaussian Distribution Entropy
@@ -1352,38 +1437,8 @@ Note that if we included the parish of S. Marco above, this will instead generat
 # Goal: create a grid plot of shannonQuantile and uniformKL_Quantile including 95% CIs
 # ----
 
-# Initialize dataframe with 2.5th percentile value, 97.5th percentile value, and original value of uniformKL_Quantile
-plot_df <-
-  as.data.frame(
-    cbind(
-      stats_of_whole_boot_cumulative_50_2$b1[[6]],
-      stats_of_whole_boot_cumulative_50_2$b2[[6]],
-      stats_of_whole_cumulative_50_2$uniformKL_Quantile
-    )
-  )
-colnames(plot_df) <- c("b1", "b2", "observed")
-
-plot1 <- ggplot(data = plot_df, aes(x = filled$Date, y = observed)) +
-  geom_line() +
-  geom_ribbon(aes(ymin = b1, ymax = b2), alpha = 0.5) + #gray out 95% CI
-  geom_line(aes(y = rep(0, length(filled$Date))), col = "red") + #create red line indicating minimum possible KL divergence
-  coord_cartesian(ylim = c(0, 0.35)) +
-  # coord_cartesian(ylim = c(0, 0.5))+ #S. Marco
-  scale_x_date(date_breaks = "12 months", date_labels = "%m-%Y") +
-  scale_y_continuous() +
-  theme_bw() +
-  theme(
-    panel.grid.major = element_blank(),
-    panel.grid.minor = element_blank(),
-    panel.background = element_blank(),
-    plot.background = element_rect(fill = "white"),
-    axis.title = element_text(size = 10),
-    plot.title = element_text(size = 12)
-  ) +
-  labs(y = "Negentropy (nats)", x = "Date", title = "Negentropy")
-
 # Initialize dataframe with 2.5th percentile value, 97.5th percentile value, and original value of shannonQuantile
-plot_df_2 <-
+ent_plot_df_cumq <-
   as.data.frame(
     cbind(
       stats_of_whole_boot_cumulative_50_2$b1[[3]],
@@ -1392,9 +1447,9 @@ plot_df_2 <-
       eff_number_cumulative
     )
   )
-colnames(plot_df_2) <- c("b1", "b2", "observed", "eff")
+colnames(ent_plot_df_cumq) <- c("b1", "b2", "observed", "eff")
 
-plot2 <- ggplot(data = plot_df_2, aes(x = filled$Date, y = observed)) +
+ent_plot_cumq <- ggplot(data = ent_plot_df_cumq, aes(x = filled$Date, y = observed)) +
   geom_line() +
   #geom_line(aes(y=rep(log(ncol(filled_modified[,-1])),length(filled$Date))),linetype="dashed")+
   geom_line(aes(y = rep(log(
@@ -1409,46 +1464,65 @@ plot2 <- ggplot(data = plot_df_2, aes(x = filled$Date, y = observed)) +
     name = "Entropy (nats)",
     sec.axis = sec_axis( #create second y-axis for effective number of parishes
       trans =  ~ .,
-      name = "Effective Number",
+      name = "Effective number of parishes",
       labels = function(x)
         scales::comma(round(exp(x)), accuracy = 1)
     )
   ) +
-  theme_bw() +
-  theme(
-    panel.grid.major = element_blank(),
-    panel.grid.minor = element_blank(),
-    panel.background = element_blank(),
-    plot.background = element_rect(fill = "white"),
-    axis.title = element_text(size = 10),
-    plot.title = element_text(size = 12)
-  ) +
-  labs(y = "Entropy (nats)", x = "Date", title = "Entropy")
+  labs(y = "Entropy (nats)", x = "Date", title = "Entropy") +
+  plot_theme()
+
+# Initialize dataframe with 2.5th percentile value, 97.5th percentile value, and original value of uniformKL_Quantile
+negent_plot_df_cumq <-
+  as.data.frame(
+    cbind(
+      stats_of_whole_boot_cumulative_50_2$b1[[6]],
+      stats_of_whole_boot_cumulative_50_2$b2[[6]],
+      stats_of_whole_cumulative_50_2$uniformKL_Quantile
+    )
+  )
+colnames(negent_plot_df_cumq) <- c("b1", "b2", "observed")
+
+negent_plot_cumq <- ggplot(data = negent_plot_df_cumq, aes(x = filled$Date, y = observed)) +
+  geom_line() +
+  geom_ribbon(aes(ymin = b1, ymax = b2), alpha = 0.5) + #gray out 95% CI
+  geom_line(aes(y = rep(0, length(filled$Date))), col = "red") + #create red line indicating minimum possible KL divergence
+  coord_cartesian(ylim = c(0, 0.35)) +
+  # coord_cartesian(ylim = c(0, 0.5))+ #S. Marco
+  scale_x_date(date_breaks = "12 months", date_labels = "%m-%Y") +
+  scale_y_continuous() +
+  labs(y = "Negentropy (nats)", x = "Date", title = "Negentropy") +
+  plot_theme()
 
 # Order such that entropy graph is on the left and KL divergence graph is on the right
-plot_ls <- list(plot2, plot1)
+plot_ls_cumq <- list(ent_plot_cumq, negent_plot_cumq)
 
 # Create grid
-untitled_grid <-
-  plot_grid(plotlist = plot_ls,
+untitled_grid_cumq <-
+  plot_grid(plotlist = plot_ls_cumq,
             labels = c("a", "b"),
-            label_size = 12)
-# now add the title
-title <- ggdraw() +
-  draw_label(
-    "Quantile Function of Cumulative Mortality",
-    fontface = 'bold',
-    x = 0,
-    hjust = 0
-  ) +
-  theme(# add margin on the left of the drawing canvas,
-    # so title is aligned with left edge of first plot
-    plot.margin = margin(0, 0, 0, 7))
-plot_grid(title,
-          untitled_grid,
-          ncol = 1,
-          # rel_heights values control vertical title margins
-          rel_heights = c(0.1, 1))
+            label_size = 8,
+            label_x = 0.02,
+            label_y = 0.98,
+            hjust = 0,
+            vjust = 1)
+# # now add the title
+# title <- ggdraw() +
+#   draw_label(
+#     "Quantile Function of Cumulative Mortality",
+#     fontface = 'bold',
+#     fontfamily = "Helvetica",
+#     x = 0,
+#     hjust = 0
+#   ) +
+#   theme(# add margin on the left of the drawing canvas,
+#     # so title is aligned with left edge of first plot
+#     plot.margin = margin(0, 0, 0, 7))
+# plot_grid(title,
+#           untitled_grid,
+#           ncol = 1,
+#           # rel_heights values control vertical title margins
+#           rel_heights = c(0.1, 1))
 
 # Save figure
 
@@ -1457,10 +1531,11 @@ ggsave(
     "Figures_Final_v2",
     "Figure2.pdf"
   ),
-  width = 2100,
-  height = 1200,
-  units = "px",
-  dpi = 300,
+  plot = untitled_grid_cumq,
+  width = 180,
+  height = 108,
+  units = "mm",
+  device = cairo_pdf,
   bg = "white"
 )
 
@@ -1469,9 +1544,10 @@ ggsave(
     "Figures_Final_v2",
     "Figure2.png"
   ),
-  width = 2100,
-  height = 1200,
-  units = "px",
+  plot = untitled_grid_cumq,
+  width = 180,
+  height = 108,
+  units = "mm",
   dpi = 300,
   bg = "white"
 )
@@ -1503,6 +1579,31 @@ ggsave(
 #)
 ```
 
+Save data.
+
+```{r save figure 2 data}
+figure2_source <- dplyr::bind_rows(
+  data.frame(
+    panel = "a",
+    date = filled$Date,
+    measure = "Entropy",
+    observed = ent_plot_df_cumq$observed,
+    lower_95_ci = ent_plot_df_cumq$b1,
+    upper_95_ci = ent_plot_df_cumq$b2,
+    reference = log(ncol(filled_modified[, -1]))
+  ),
+  data.frame(
+    panel = "b",
+    date = filled$Date,
+    measure = "Negentropy",
+    observed = negent_plot_df_cumq$observed,
+    lower_95_ci = negent_plot_df_cumq$b1,
+    upper_95_ci = negent_plot_df_cumq$b2,
+    reference = 0
+  )
+)
+```
+
 ## Figure 3
 
 Second, we create Figure 3, a grid plot consisting of:
@@ -1521,7 +1622,7 @@ Note that if we included the parish of S. Marco above, this will instead generat
 # ----
 
 # Initialize dataframe containing 2.5th percentile values, 97.5th percentile values, and observed values of the entropy of the PDF
-plot_df <-
+ent_plot_df_cumPDF <-
   as.data.frame(
     cbind(
       stats_of_whole_boot_cumulative_50_2$b1[[2]],
@@ -1530,9 +1631,9 @@ plot_df <-
       normal_entropy_cumulative
     )
   )
-colnames(plot_df) <- c("b1", "b2", "observed", "maximum")
+colnames(ent_plot_df_cumPDF) <- c("b1", "b2", "observed", "maximum")
 
-plot1 <- ggplot(data = plot_df, aes(x = filled$Date, y = observed)) +
+ent_plot_cumPDF <- ggplot(data = ent_plot_df_cumPDF, aes(x = filled$Date, y = observed)) +
   geom_line() +
   #geom_line(aes(y = rep(log(ceiling(
   #  log2(ncol(filled_modified[, -1])) #ceiling(log2(N) + 1) is the number of bins under Sturges' Rule
@@ -1543,19 +1644,11 @@ plot1 <- ggplot(data = plot_df, aes(x = filled$Date, y = observed)) +
   # coord_cartesian(ylim=c(0,2))+ #S. Marco
   scale_x_date(date_breaks = "12 months", date_labels = "%m-%Y") +
   scale_y_continuous() +
-  theme_bw() +
-  theme(
-    panel.grid.major = element_blank(),
-    panel.grid.minor = element_blank(),
-    panel.background = element_blank(),
-    plot.background = element_rect(fill = "white"),
-    axis.title = element_text(size = 10),
-    plot.title = element_text(size = 12)
-  ) +
-  labs(y = "Entropy (nats)", x = "Date", title = "Entropy")
+  labs(y = "Entropy (nats)", x = "Date", title = "Entropy") +
+  plot_theme()
 
 # Initialize dataframe containing 2.5th percentile values, 97.5th percentile values, and observed values of the negentropy of the PDF
-plot_df_2 <-
+negent_plot_df_cumPDF <-
   as.data.frame(
     cbind(
       stats_of_whole_boot_cumulative_50_2$b1[[4]],
@@ -1563,9 +1656,9 @@ plot_df_2 <-
       stats_of_whole_cumulative_50_2$negentPDF
     )
   )
-colnames(plot_df_2) <- c("b1", "b2", "observed")
+colnames(negent_plot_df_cumPDF) <- c("b1", "b2", "observed")
 
-plot2 <- ggplot(data = plot_df_2, aes(x = filled$Date, y = observed)) +
+negent_plot_cumPDF <- ggplot(data = negent_plot_df_cumPDF, aes(x = filled$Date, y = observed)) +
   geom_line() +
   #geom_line(aes(y=funny_vec))+
   geom_ribbon(aes(ymin = b1, ymax = b2), alpha = 0.5) +
@@ -1574,17 +1667,9 @@ plot2 <- ggplot(data = plot_df_2, aes(x = filled$Date, y = observed)) +
   # coord_cartesian(ylim=c(0,1.5))+ #S. Marco
   scale_x_date(date_breaks = "12 months", date_labels = "%m-%Y") +
   scale_y_continuous() +
-  theme_bw() +
-  theme(
-    panel.grid.major = element_blank(),
-    panel.grid.minor = element_blank(),
-    panel.background = element_blank(),
-    plot.background = element_rect(fill = "white"),
-    axis.title = element_text(size = 10),
-    plot.title = element_text(size = 12)
-  ) +
   #labs(y=expression(paste(D[KL]," (nats)")),x="Date",title="Negentropy")
-  labs(y = "Negentropy (nats)", x = "Date", title = "Negentropy")
+  labs(y = "Negentropy (nats)", x = "Date", title = "Negentropy") +
+  plot_theme()
 
 # Experimental Analysis: KL divergence of PDF from uniform (excluded in final paper)
 # plot_df_3 <- as.data.frame(cbind(stats_of_whole_boot_cumulative_50_2$b1[[5]],stats_of_whole_boot_cumulative_50_2$b2[[5]],stats_of_whole_cumulative_50_2$uniformKL_PDF))
@@ -1601,31 +1686,36 @@ plot2 <- ggplot(data = plot_df_2, aes(x = filled$Date, y = observed)) +
 # untitled_grid <- plot_grid(plotlist=plot_ls,labels=c("A","B","C"),label_size=12)
 
 # Order such that entropy graph is on the left and KL divergence graph is on the right
-plot_ls <- list(plot1, plot2)
+plot_ls_cumPDF <- list(ent_plot_cumPDF, negent_plot_cumPDF)
 
 # Create the grid 
-untitled_grid <-
-  plot_grid(plotlist = plot_ls,
+untitled_grid_cumPDF <-
+  plot_grid(plotlist = plot_ls_cumPDF,
             labels = c("a", "b"),
-            label_size = 12)
+            label_size = 8,
+            label_x = 0.02,
+            label_y = 0.98,
+            hjust = 0,
+            vjust = 1)
 
-# Add the title
-title <- ggdraw() +
-  draw_label(
-    "PDF of Cumulative Mortality",
-    fontface = 'bold',
-    x = 0,
-    hjust = 0
-  ) +
-  theme(# add margin on the left of the drawing canvas,
-    # so title is aligned with left edge of first plot
-    plot.margin = margin(0, 0, 0, 7))
-
-plot_grid(title,
-          untitled_grid,
-          ncol = 1,
-          # rel_heights values control vertical title margins
-          rel_heights = c(0.1, 1))
+# # Add the title
+# title <- ggdraw() +
+#   draw_label(
+#     "PDF of Cumulative Mortality",
+#     fontface = 'bold',
+#     fontfamily = "Helvetica",
+#     x = 0,
+#     hjust = 0
+#   ) +
+#   theme(# add margin on the left of the drawing canvas,
+#     # so title is aligned with left edge of first plot
+#     plot.margin = margin(0, 0, 0, 7))
+# 
+# plot_grid(title,
+#           untitled_PDF_grid,
+#           ncol = 1,
+#           # rel_heights values control vertical title margins
+#           rel_heights = c(0.1, 1))
 
 # Save the plot
 
@@ -1634,10 +1724,11 @@ ggsave(
     "Figures_Final_v2",
     "Figure3.pdf"
   ),
-  width = 2100,
-  height = 1200,
-  units = "px",
-  dpi = 300,
+  plot = untitled_grid_cumPDF,
+  width = 180,
+  height = 108,
+  units = "mm",
+  device = cairo_pdf,
   bg = "white"
 )
 
@@ -1646,9 +1737,10 @@ ggsave(
     "Figures_Final_v2",
     "Figure3.png"
   ),
-  width = 2100,
-  height = 1200,
-  units = "px",
+  plot = untitled_grid_cumPDF,
+  width = 180,
+  height = 108,
+  units = "mm",
   dpi = 300,
   bg = "white"
 )
@@ -1680,6 +1772,31 @@ ggsave(
 #)
 ```
 
+Save figure 3 data.
+
+```{r save figure 3 data}
+figure3_source <- dplyr::bind_rows(
+  data.frame(
+    panel = "a",
+    date = filled$Date,
+    measure = "Entropy",
+    observed = ent_plot_df_cumPDF$observed,
+    lower_95_ci = ent_plot_df_cumPDF$b1,
+    upper_95_ci = ent_plot_df_cumPDF$b2,
+    reference = normal_entropy_cumulative
+  ),
+  data.frame(
+    panel = "b",
+    date = filled$Date,
+    measure = "Negentropy",
+    observed = negent_plot_df_cumPDF$observed,
+    lower_95_ci = negent_plot_df_cumPDF$b1,
+    upper_95_ci = negent_plot_df_cumPDF$b2,
+    reference = 0
+  )
+)
+```
+
 ## Supplementary Figure S2
 
 Third, we create Supplementary Figure S2, a grid plot containing:
@@ -1696,38 +1813,8 @@ Third, we create Supplementary Figure S2, a grid plot containing:
 # Goal: Grid plot with instantaneous shannonQuantile (left) and instantaneous uniformKL_PDF (right)
 #----
 
-# Initialize dataframe containing 2.5th percentile, 97.5th percentile, and observed values of KL divergence of the quantile function from a uniform distribution
-plot_df <-
-  as.data.frame(
-    cbind(
-      stats_of_whole_boot_instantaneous_50_2$b1[[6]],
-      stats_of_whole_boot_instantaneous_50_2$b2[[6]],
-      stats_of_whole_instantaneous_50_2$uniformKL_Quantile
-    )
-  )
-colnames(plot_df) <- c("b1", "b2", "observed")
-
-plot1 <- ggplot(data = plot_df, aes(x = filled$Date, y = observed)) +
-  geom_line(lwd = 0.25) +
-  geom_ribbon(aes(ymin = b1, ymax = b2), alpha = 0.5) +
-  geom_line(aes(y = rep(0, length(filled$Date))), col = "red") +
-  scale_x_date(date_breaks = "12 months", date_labels = "%m-%Y") +
-  scale_y_continuous() +
-  expand_limits(y = c(0, 2)) +
-  theme_bw() +
-  theme(
-    panel.grid.major = element_blank(),
-    panel.grid.minor = element_blank(),
-    panel.background = element_blank(),
-    plot.background = element_rect(fill = "white"),
-    plot.title = element_text(size = 12),
-    axis.title = element_text(size = 10)
-  ) +
-  #labs(y=expression(D[K*L]),x="Date",title="Negentropy")
-  labs(y = "Negentropy (nats)", x = "Date", title = "Negentropy")
-
 # Initialize dataframe containing 2.5th percentile, 97.5th percentile, and original values of entropy of the quantile function
-plot_df_2 <-
+ent_plot_df_instq <-
   as.data.frame(
     cbind(
       stats_of_whole_boot_instantaneous_50_2$b1[[3]],
@@ -1736,9 +1823,9 @@ plot_df_2 <-
       log(non_zeroes_instantaneous)
     )
   )
-colnames(plot_df_2) <- c("b1", "b2", "observed", "nonzeroes")
+colnames(ent_plot_df_instq) <- c("b1", "b2", "observed", "nonzeroes")
 
-plot2 <- ggplot(data = plot_df_2, aes(x = filled$Date, y = observed)) +
+ent_plot_instq <- ggplot(data = ent_plot_df_instq, aes(x = filled$Date, y = observed)) +
   #geom_line(aes(y=nonzeroes),lwd=0.25,col="red",alpha=0.75)+ #optional, plots number of parishes with non-zero deaths
   geom_line(lwd = 0.25) +
   geom_line(aes(y = rep(log(
@@ -1750,48 +1837,68 @@ plot2 <- ggplot(data = plot_df_2, aes(x = filled$Date, y = observed)) +
     name = "Entropy (nats)",
     sec.axis = sec_axis( #create second y-axis for effective number of parishes
       trans =  ~ .,
-      name = "Effective Number",
+      name = "Effective number of parishes",
       labels = function(x)
         scales::comma(round(exp(x)), accuracy = 1)
     )
   ) +
   expand_limits(y = c(2, 4)) +
-  theme_bw() +
-  theme(
-    panel.grid.major = element_blank(),
-    panel.grid.minor = element_blank(),
-    panel.background = element_blank(),
-    plot.background = element_rect(fill = "white"),
-    plot.title = element_text(size = 12),
-    axis.title = element_text(size = 10)
-  ) +
-  labs(y = "Entropy (nats)", x = "Date", title = "Entropy")
+  labs(y = "Entropy (nats)", x = "Date", title = "Entropy") +
+  plot_theme()
+
+# Initialize dataframe containing 2.5th percentile, 97.5th percentile, and observed values of KL divergence of the quantile function from a uniform distribution
+negent_plot_df_instq <-
+  as.data.frame(
+    cbind(
+      stats_of_whole_boot_instantaneous_50_2$b1[[6]],
+      stats_of_whole_boot_instantaneous_50_2$b2[[6]],
+      stats_of_whole_instantaneous_50_2$uniformKL_Quantile
+    )
+  )
+colnames(negent_plot_df_instq) <- c("b1", "b2", "observed")
+
+negent_plot_instq <- ggplot(data = negent_plot_df_instq, aes(x = filled$Date, y = observed)) +
+  geom_line(lwd = 0.25) +
+  geom_ribbon(aes(ymin = b1, ymax = b2), alpha = 0.5) +
+  geom_line(aes(y = rep(0, length(filled$Date))), col = "red") +
+  scale_x_date(date_breaks = "12 months", date_labels = "%m-%Y") +
+  scale_y_continuous() +
+  expand_limits(y = c(0, 2)) +
+  #labs(y=expression(D[K*L]),x="Date",title="Negentropy")
+  labs(y = "Negentropy (nats)", x = "Date", title = "Negentropy") +
+  plot_theme()
 
 # Order such that entropy graph is on the left and KL divergence graph is on the right
-plot_ls <- list(plot2, plot1)
-untitled_grid <-
-  plot_grid(plotlist = plot_ls,
+plot_ls_instq <- list(ent_plot_instq, negent_plot_instq)
+
+untitled_grid_instq <-
+  plot_grid(plotlist = plot_ls_instq,
             labels = c("a", "b"),
-            label_size = 12)
+            label_size = 8,
+            label_x = 0.02,
+            label_y = 0.98,
+            hjust = 0,
+            vjust = 1)
 
-# Add the title
-title <- ggdraw() +
-  draw_label(
-    "Quantile Function of Instantaneous Mortality",
-    fontface = 'bold',
-    x = 0,
-    hjust = 0
-  ) +
-  theme(# add margin on the left of the drawing canvas,
-    # so title is aligned with left edge of first plot
-    plot.margin = margin(0, 0, 0, 7))
-
-# Create the grid 
-plot_grid(title,
-          untitled_grid,
-          ncol = 1,
-          # rel_heights values control vertical title margins
-          rel_heights = c(0.1, 1))
+# # Add the title
+# title <- ggdraw() +
+#   draw_label(
+#     "Quantile Function of Instantaneous Mortality",
+#     fontface = 'bold',
+#     fontfamily = "Helvetica",
+#     x = 0,
+#     hjust = 0
+#   ) +
+#   theme(# add margin on the left of the drawing canvas,
+#     # so title is aligned with left edge of first plot
+#     plot.margin = margin(0, 0, 0, 7))
+# 
+# # Create the grid 
+# plot_grid(title,
+#           untitled_grid,
+#           ncol = 1,
+#           # rel_heights values control vertical title margins
+#           rel_heights = c(0.1, 1))
 
 # Save the figure
 
@@ -1800,10 +1907,11 @@ ggsave(
     "Figures_Final_v2",
     "SuppFig2.pdf"
   ),
-  width = 2100,
-  height = 1200,
-  units = "px",
-  dpi = 300,
+  plot = untitled_grid_instq,
+  width = 180,
+  height = 108,
+  units = "mm",
+  device = cairo_pdf,
   bg = "white"
 )
 
@@ -1812,11 +1920,37 @@ ggsave(
     "Figures_Final_v2",
     "SuppFig2.png"
   ),
-  width = 2100,
-  height = 1200,
-  units = "px",
+  plot = untitled_grid_instq,
+  width = 180,
+  height = 108,
+  units = "mm",
   dpi = 300,
   bg = "white"
+)
+```
+
+Save the data.
+
+```{r save supp fig 2 data}
+supp_figure2_source <- dplyr::bind_rows(
+  data.frame(
+    panel = "a",
+    date = filled$Date,
+    measure = "Entropy",
+    observed = ent_plot_df_instq$observed,
+    lower_95_ci = ent_plot_df_instq$b1,
+    upper_95_ci = ent_plot_df_instq$b2,
+    reference = log(ncol(filled_modified[, -1]))
+  ),
+  data.frame(
+    panel = "b",
+    date = filled$Date,
+    measure = "Negentropy",
+    observed = negent_plot_df_instq$observed,
+    lower_95_ci = negent_plot_df_instq$b1,
+    upper_95_ci = negent_plot_df_instq$b2,
+    reference = 0
+  )
 )
 ```
 
@@ -1836,7 +1970,7 @@ Fourth, we create Supplementary Figure S3, a grid plot containing:
 #----
 
 # Initialize dataframe containing 2.5th percentile, 97.5th percentile, and original values of the entropy of the PDF
-plot_df <-
+ent_plot_df_instPDF <-
   as.data.frame(
     cbind(
       stats_of_whole_boot_instantaneous_50_2$b1[[2]],
@@ -1845,9 +1979,9 @@ plot_df <-
       normal_entropy_instantaneous
     )
   )
-colnames(plot_df) <- c("b1", "b2", "observed", "maximum")
+colnames(ent_plot_df_instPDF) <- c("b1", "b2", "observed", "maximum")
 
-plot1 <- ggplot(data = plot_df, aes(x = filled$Date, y = observed)) +
+ent_plot_instPDF <- ggplot(data = ent_plot_df_instPDF, aes(x = filled$Date, y = observed)) +
   geom_ribbon(aes(
     x = filled$Date,
     ymin = b1,
@@ -1861,19 +1995,11 @@ plot1 <- ggplot(data = plot_df, aes(x = filled$Date, y = observed)) +
   scale_x_date(date_breaks = "12 months", date_labels = "%m-%Y") +
   scale_y_continuous() +
   expand_limits(y = c(0, 2)) +
-  theme_bw() +
-  theme(
-    panel.grid.major = element_blank(),
-    panel.grid.minor = element_blank(),
-    panel.background = element_blank(),
-    plot.background = element_rect(fill = "white"),
-    axis.title = element_text(size = 10),
-    plot.title = element_text(size = 12)
-  ) +
-  labs(y = "Entropy (nats)", x = "Date", title = "Entropy")
+  labs(y = "Entropy (nats)", x = "Date", title = "Entropy") +
+  plot_theme()
 
 # Initialize dataframe containing 2.5th percentile, 97.5th percentile, and original values of the negentropy of the PDF
-plot_df_2 <-
+negent_plot_df_instPDF <-
   as.data.frame(
     cbind(
       stats_of_whole_boot_instantaneous_50_2$b1[[4]],
@@ -1881,9 +2007,9 @@ plot_df_2 <-
       stats_of_whole_instantaneous_50_2$negentPDF
     )
   )
-colnames(plot_df_2) <- c("b1", "b2", "observed")
+colnames(negent_plot_df_instPDF) <- c("b1", "b2", "observed")
 
-plot2 <- ggplot(data = plot_df_2, aes(x = filled$Date, y = observed)) +
+negent_plot_instPDF <- ggplot(data = negent_plot_df_instPDF, aes(x = filled$Date, y = observed)) +
   geom_ribbon(aes(
     x = filled$Date,
     ymin = b1,
@@ -1894,16 +2020,8 @@ plot2 <- ggplot(data = plot_df_2, aes(x = filled$Date, y = observed)) +
   scale_x_date(date_breaks = "12 months", date_labels = "%m-%Y") +
   scale_y_continuous() +
   coord_cartesian(ylim = c(0, 1.5)) +
-  theme_bw() +
-  theme(
-    panel.grid.major = element_blank(),
-    panel.grid.minor = element_blank(),
-    panel.background = element_blank(),
-    plot.background = element_rect(fill = "white"),
-    axis.title = element_text(size = 10),
-    plot.title = element_text(size = 12)
-  ) +
-  labs(y = "Negentropy (nats)", x = "Date", title = "Negentropy")
+  labs(y = "Negentropy (nats)", x = "Date", title = "Negentropy") +
+  plot_theme()
 
 # Experimental Analysis: include KL divergence of the PDF from a uniform distribution (excluded in final paper)
 # plot_df_3 <- as.data.frame(cbind(stats_of_whole_boot_instantaneous_50_2$b1[[5]],stats_of_whole_boot_instantaneous_50_2$b2[[5]],stats_of_whole_instantaneous_50_2$uniformKL_PDF))
@@ -1918,30 +2036,35 @@ plot2 <- ggplot(data = plot_df_2, aes(x = filled$Date, y = observed)) +
 #   labs(y="KL Divergence",x="Date",title="KL Divergence from Uniform")
 
 # Order plots such that entropy graph is on the left and KL divergence graph is on the right
-plot_ls <- list(plot1, plot2)
-untitled_grid <-
-  plot_grid(plotlist = plot_ls,
+plot_ls_instPDF <- list(ent_plot_instPDF, negent_plot_instPDF)
+
+untitled_grid_instPDF <-
+  plot_grid(plotlist = plot_ls_instPDF,
             labels = c("a", "b"),
-            label_size = 12)
+            label_size = 8,
+            label_x = 0.02,
+            label_y = 0.98,
+            hjust = 0,
+            vjust = 1)
 
 # Add the title
-title <- ggdraw() +
-  draw_label(
-    "PDF of Instantaneous Mortality",
-    fontface = 'bold',
-    x = 0,
-    hjust = 0
-  ) +
-  theme(# add margin on the left of the drawing canvas,
-    # so title is aligned with left edge of first plot
-    plot.margin = margin(0, 0, 0, 7))
-
-# Create the grid
-plot_grid(title,
-          untitled_grid,
-          ncol = 1,
-          # rel_heights values control vertical title margins
-          rel_heights = c(0.1, 1))
+# title <- ggdraw() +
+#   draw_label(
+#     "PDF of Instantaneous Mortality",
+#     fontface = 'bold',
+#     x = 0,
+#     hjust = 0
+#   ) +
+#   theme(# add margin on the left of the drawing canvas,
+#     # so title is aligned with left edge of first plot
+#     plot.margin = margin(0, 0, 0, 7))
+# 
+# # Create the grid
+# plot_grid(title,
+#           untitled_grid,
+#           ncol = 1,
+#           # rel_heights values control vertical title margins
+#           rel_heights = c(0.1, 1))
 
 # Save the figure
 
@@ -1950,10 +2073,11 @@ ggsave(
     "Figures_Final_v2",
     "SuppFig3.pdf"
   ),
-  width = 2100,
-  height = 1200,
-  units = "px",
-  dpi = 300,
+  plot = untitled_grid_instPDF,
+  width = 180,
+  height = 108,
+  units = "mm",
+  device = cairo_pdf,
   bg = "white"
 )
 
@@ -1962,11 +2086,37 @@ ggsave(
     "Figures_Final_v2",
     "SuppFig3.png"
   ),
-  width = 2100,
-  height = 1200,
-  units = "px",
+  plot = untitled_grid_instPDF,
+  width = 180,
+  height = 108,
+  units = "mm",
   dpi = 300,
   bg = "white"
+)
+```
+
+Save the data.
+
+```{r save supp fig 3 data}
+supp_figure3_source <- dplyr::bind_rows(
+  data.frame(
+    panel = "a",
+    date = filled$Date,
+    measure = "Entropy",
+    observed = ent_plot_df_instPDF$observed,
+    lower_95_ci = ent_plot_df_instPDF$b1,
+    upper_95_ci = ent_plot_df_instPDF$b2,
+    reference = normal_entropy_instantaneous
+  ),
+  data.frame(
+    panel = "b",
+    date = filled$Date,
+    measure = "Negentropy",
+    observed = negent_plot_df_instPDF$observed,
+    lower_95_ci = negent_plot_df_instPDF$b1,
+    upper_95_ci = negent_plot_df_instPDF$b2,
+    reference = 0
+  )
 )
 ```
 
@@ -2033,46 +2183,134 @@ for (s in unique(sestiere_df_modified$Sestiere)) {
 maxima_column <- rep(maxima_vec, nrow(filled_modified))
 plot_df$maxima <- maxima_column
 
-ggplot(plot_df, aes(
-  x = rep(filled$Date, each = 6),
-  group = series,
-  color = series,
-  fill = series
-)) +
-  geom_ribbon(aes(ymin = lower, ymax = upper),
-              alpha = 0.4,
-              color = NA) +
-  geom_line(aes(y = lower), linetype = "dashed", linewidth = 0.25) + #use dashed line to indicate maximum since color is already being used
-  geom_line(aes(y = upper), linetype = "dashed", linewidth = 0.25) +
-  geom_line(aes(y = observed), linewidth = 0.5) +
-  geom_line(aes(y = maxima), linetype = "dashed", linewidth = 0.75) +
-  scale_color_manual(values = c("green", "red", "blue", "yellow", "orange", "pink")) +
-  scale_fill_manual(values = c("green", "red", "blue", "yellow", "orange", "pink")) +
+# figure4 <- ggplot(plot_df,
+#                   aes(
+#                     x = rep(filled$Date, each = 6),
+#                     group = series,
+#                     color = series,
+#                     fill = series
+#                   )) +
+#   geom_ribbon(aes(ymin = lower,
+#                   ymax = upper),
+#               alpha = 0.4,
+#               color = NA) +
+#   #geom_line(aes(y = lower), linetype = "dashed", linewidth = 0.25) + #use dashed line to indicate maximum since color is already being used
+#   #geom_line(aes(y = upper), linetype = "dashed", linewidth = 0.25) +
+#   geom_line(aes(y = observed), linewidth = 0.5, na.rm = TRUE) +
+#   geom_line(
+#     aes(y = maxima),
+#     linetype = "dashed",
+#     linewidth = 0.75,
+#     na.rm = TRUE,
+#     show.legend = FALSE
+#   ) +
+#   scale_color_manual(
+#     values = Okabe_Ito_palette
+#   ) +
+#   scale_fill_manual(
+#     values = Okabe_Ito_palette
+#   ) +
+#   coord_cartesian(ylim = c(0.5, 2.5)) +
+#   scale_y_continuous(
+#     name = "Entropy (nats)",
+#     # Create second axis for effective number
+#     sec.axis = sec_axis(
+#       trans =  ~ .,
+#       name = "Effective number of parishes",
+#       labels = function(x)
+#         scales::comma(exp(x), accuracy = 0.1)
+#     )
+#   ) +
+#   labs(
+#     #title = "Quantile Function of Cumulative Mortality by Sestiere",
+#     x = "Date",
+#     y = "Entropy (nats)",
+#     color = "Sestiere",
+#     fill = "Sestiere"
+#   ) +
+#   plot_theme()
+# Make the date explicit in the plotting dataframe
+plot_df <- plot_df %>%
+  mutate(Date = filled$Date[time])
+
+# One consistent colour per sestiere
+sestiere_colors <- setNames(
+  Okabe_Ito_palette,
+  levels(plot_df$series)
+)
+
+figure4 <- ggplot(
+  plot_df,
+  aes(x = Date, group = series)
+) +
+  geom_ribbon(
+    aes(ymin = lower, ymax = upper, fill = series),
+    alpha = 0.22,
+    colour = NA
+  ) +
+  geom_line(
+    aes(y = observed, color = series),
+    linewidth = 0.55
+  ) +
+  geom_line(
+    aes(y = maxima),
+    colour = "black",
+    linetype = "dashed",
+    linewidth = 0.4
+  ) +
+  facet_wrap(
+    vars(series),
+    ncol = 2
+  ) +
+  scale_color_manual(
+    values = sestiere_colors,
+    guide = "none"
+  ) +
+  scale_fill_manual(
+    values = sestiere_colors,
+    guide = "none"
+  ) +
   coord_cartesian(ylim = c(0.5, 2.5)) +
   scale_y_continuous(
     name = "Entropy (nats)",
-    # Create second axis for effective number
-    sec.axis = sec_axis( 
-      trans =  ~ .,
-      name = "Effective Number",
-      labels = function(x)
-        scales::comma(exp(x), accuracy = 0.1)
+    breaks = seq(0.5, 2.5, by = 0.5),
+    sec.axis = sec_axis(
+      trans= ~ .,
+      name = "Effective number of parishes",
+      labels = function(x) {
+        scales::number(exp(x), accuracy = 0.1)
+      }
     )
   ) +
-  theme_bw() +
-  theme(
-    panel.grid.major = element_blank(),
-    panel.grid.minor = element_blank(),
-    panel.background = element_blank(),
-    plot.background = element_rect(fill = "white")
+  scale_x_date(
+    date_breaks = "1 year",
+    date_labels = "%Y",
+    expand = expansion(mult = c(0.01, 0.02))
   ) +
-  labs(
-    title = "Quantile Function of Cumulative Mortality by Sestiere",
-    #title = names(stats_of_whole_cumulative_50_2)[stat_of_interest],
-    x = "Date",
-    y = "Entropy (nats)",
-    color = "Sestiere",
-    fill = "Sestiere"
+  labs(x = "Date") +
+  plot_theme() +
+  theme(
+    legend.position = "none",
+
+    strip.background = element_blank(),
+    strip.text = element_text(
+      family = "Helvetica",
+      size = 8,
+      face = "bold",
+      hjust = 0
+    ),
+
+    panel.spacing.x = grid::unit(5, "mm"),
+    panel.spacing.y = grid::unit(4, "mm"),
+
+    axis.title = element_text(
+      family = "Helvetica",
+      size = 8
+    ),
+    axis.text = element_text(
+      family = "Helvetica",
+      size = 7
+    )
   )
 
 # Save figure
@@ -2082,10 +2320,11 @@ ggsave(
     "Figures_Final_v2",
     "Figure4.pdf"
   ),
-  width = 2100,
-  height = 1500,
-  units = "px",
-  dpi = 300,
+  plot = figure4,
+  width = 180,
+  height = 180,
+  units = "mm",
+  device = cairo_pdf,
   bg = "white"
 )
 
@@ -2094,12 +2333,28 @@ ggsave(
     "Figures_Final_v2",
     "Figure4.png"
   ),
-  width = 2100,
-  height = 1500,
-  units = "px",
+  plot = figure4,
+  width = 180,
+  height = 180,
+  units = "mm",
   dpi = 300,
   bg = "white"
 )
+```
+
+Save data.
+
+```{r save figure 4 data}
+figure4_source <- plot_df |>
+  dplyr::transmute(
+    date = rep(filled$Date, each = 6),
+    sestiere = series,
+    observed_entropy = observed,
+    lower_95_ci = lower,
+    upper_95_ci = upper,
+    maximum_entropy = maxima,
+    effective_number = exp(observed)
+  )
 ```
 
 ## Figure 1
@@ -2110,528 +2365,328 @@ The goal with Figure 1 is to illustrate how the distribution of disease evolves 
 
 The goal of this section is to generate both the choropleth maps as described above for Figure 1 as well as a GIF that cycles through the choropleth map at the end of every month (Supplementary Video S1).
 
-The following code is a modification of G. Lazzari and G. Colavizza's notebook titled "Venice deaths on Maps" published in their 2020 paper. Because the code comes from an older version of R that uses some packages that are no longer supported, the notebook must be run using a separate renv from the rest of this project. As such, we provide the code here for reference purposes but do not run it.
+The following code is a modification of G. Lazzari and G. Colavizza's notebook titled "Venice deaths on Maps" published in their 2020 paper. The previous code uses some packages that are no longer supported, so some modifications are made in this notebook.
 
-```{r choropleth renv initialization, eval = FALSE}
-renv::init(repos="https://packagemanager.posit.co/cran/2020-09-25")
-# install.packages("rgdal")
-# install.packages("maptools")
-# install.packages("tmap")
-# install.packages("oce")
-```
-
-```{r choropleth load packages, eval = FALSE}
-# clean env. vars
-rm(list=ls()) 
-
-# packages for maps
-library(maptools) # gpclibPermit()
+```{r choropleth load packages}
+library(sf)
 library(tmap)
-library(rgdal)
-library(oce)
-library("RColorBrewer")
-
-# basic packages
-library("ggplot2")
-library(reshape2)
 library(dplyr)
-library(lubridate)
+library(tidyr)
 library(stringi)
+library(readr)
+library(viridisLite)
 ```
 
-#### Load shap file for map skeleton
+#### Prepare spatial object
 
-```{r choropleth load shap file, eval = FALSE}
-shap = readOGR("~/VenetianPlague_Entropy/1729_PAR_CONF.shp")
+```{r choropleth load shap file}
+parish_key <- function(x) {
+  x <- stringi::stri_trans_general(x, id = "Latin-ASCII")
+  x <- tolower(x)
+  gsub("[^a-z0-9]+", "", x)
+}
 
-# 'id' does not seem to be useful --> remove it
-shap@data <- shap@data['NAME']
+shape_sf <- st_read(
+  "1729_PAR_CONF.shp",
+  quiet = TRUE
+) |>
+  transmute(
+    parish_map = NAME,
+    parish_key = parish_key(NAME)
+  ) |>
+  st_make_valid()
+
+stopifnot(!anyDuplicated(shape_sf$parish_key))
 ```
 
 #### Original deaths on map
 
-##### Load clean dataset
+Load clean dataset
 
-```{r choropleth load clean dataset, eval = FALSE}
-original_deaths <- read.csv('~/VenetianPlague_Entropy/ALL_utf.csv')
-# mind that NA have to be set to 0, ...
-# otherwise the aggregrated sum will be reduced to NA!, but...
-original_deaths[is.na(original_deaths)] <- 0 # cleaning NAs >> we'll set them back later to NA (***)
+```{r choropleth load clean dataset}
+filled_for_map <- filled_modified
 
-# remove diacritics
-colnames(original_deaths) <- stri_trans_general(colnames(original_deaths), id = "Latin-ASCII")
+names(filled_for_map)[1] <- "Date"
+filled_for_map$Date <- as.Date(filled$Date)
 
-# fix dates
-original_deaths$Date <- as.POSIXct(original_deaths$Date,format = '%m/%d/%Y')
-my_shift <- as.POSIXct('1629-01-01')
-original_deaths$Date <- original_deaths$Date - difftime(original_deaths$Date[1],my_shift )
+mortality_long <- filled_for_map |>
+  mutate(day_index = seq_len(nrow(filled_for_map))) |>
+  pivot_longer(
+    cols = -c(Date, day_index),
+    names_to = "parish_data",
+    values_to = "daily_deaths"
+  ) |>
+  mutate(
+    parish_key = parish_key(parish_data),
+    daily_deaths = replace_na(as.numeric(daily_deaths), 0)
+  ) |>
+  arrange(parish_key, day_index) |>
+  group_by(parish_key) |>
+  mutate(
+    cumulative_deaths = cumsum(daily_deaths)
+  ) |>
+  ungroup()
 ```
 
-##### aggregate over months
+Prepare population table
 
-(and set back NAs)
+```{r prepare population table}
+population_key <- population_specified_modified |>
+  transmute(
+    parish_data = Parish,
+    parish_key = parish_key(Parish),
+    population_people = Population * 1000
+  )
 
-```{r choropleth aggregate over months, eval = FALSE}
-# melt parishes
-melted_df  =  melt(original_deaths,'Date',variable.name = 'parish',value.name = 'deaths')
-
-# group over months, sum ...
-# credits to: https://ro-che.info/articles/2017-02-22-group_by_month_r 
-agg_melt_df = melted_df %>% group_by(month=floor_date(Date, "month"),parish=parish) %>% 
-      summarise(deaths = sum(deaths))
-
-jan_melted_df <- melted_df[melted_df$Date <= as.Date("1629-01-07",format="%Y-%m-%d"),]
-jan_agg_melt_df = jan_melted_df %>% group_by(month=floor_date(Date,"month"),parish=parish) %>% summarise(deaths=sum(deaths)) #substitute Jan with up to Jan 7
-
-agg_melt_df[1:70,] <- jan_agg_melt_df
-
-# ...and un-melt again
-agg_df = as.data.frame(t(dcast(agg_melt_df,month~parish,drop = FALSE)))
-
-#...and remove useless row
-agg_df = agg_df[-1,]
-
-# save parishes names as they will be canceledby next step
-parish_names = rownames(agg_df)
-
-# trasform all data to numeric 
-agg_df = as.data.frame(sapply(agg_df,function(x){as.numeric(as.character(x))}))
-
-#  (***) set parish with no deaths on the whole t-w to NAs!
-agg_df[rowSums(agg_df) == 0,] = NA
-
-# create name col
-agg_df$NAME = parish_names
-
-# remove vars of intermediate steps
-remove(melted_df,agg_melt_df,parish_names,jan_melted_df,jan_agg_melt_df)
+stopifnot(!anyDuplicated(population_key$parish_key))
 ```
 
-##### sum over whole time window
+Join population and calculate what is mapped
 
-(don't run this section if you are not interested)
-
-create cols for sums and names and drop the rest (and set back NAs)
-
-```{r choropleth sum over whole time window, eval = FALSE}
-original_summed <- as.data.frame(colSums(original_deaths[,2:ncol(original_deaths)]))
-colnames(original_summed) <- 'Total_deaths'
-original_summed$NAME <- rownames(original_summed)
-remove(original_deaths)
-
-# remember we had to set NAs to 0 to avoid missing some data). Indeed now we have lost all NAs:
-sum(is.na(original_summed))
-# so we set it back to NA:
-original_summed[original_summed==0] = NA
-sum(is.na(original_summed))
+```{r join population}
+map_values <- mortality_long |>
+  left_join(
+    population_key,
+    by = "parish_key",
+    suffix = c("", "_population")
+  ) |>
+  mutate(
+    cumulative_mortality =
+      cumulative_deaths / population_people
+  )
 ```
 
-##### merge deaths data into shape object
+Check the join
 
-fix col names to match names in shapes:
+```{r check join}
+unmatched_shape_names <- shape_sf |>
+  st_drop_geometry() |>
+  anti_join(
+    distinct(map_values, parish_key),
+    by = "parish_key"
+  )
 
-```{r choropleth merge deaths data into shape object, eval = FALSE}
-#replace spaces with dots 
-shap@data$NAME <- sapply(shap@data$NAME, function(x) gsub('\\s','.',x))
-# Remove diacritics
-shap@data$NAME <- stri_trans_general(shap@data$NAME, id = "Latin-ASCII")
+unmatched_data_names <- map_values |>
+  distinct(parish_key, parish_data) |>
+  anti_join(
+    st_drop_geometry(shape_sf),
+    by = "parish_key"
+  )
+
+print(unmatched_shape_names)
+print(unmatched_data_names)
+```
+Specify which days we want to investigate:
+
+```{r specify days of interest}
+end_of_month_indices <- c(which(day(filled$Date) == 1)[-1] - 1, nrow(filled_modified))
+days_vec <- c(7, end_of_month_indices[22], end_of_month_indices[36])
 ```
 
-fix col names to match names in dataset summed >> over all time-window <<
+Create map objects:
 
-```{r choropleth fix col names all-time, eval = FALSE}
-# the only problematic one is S..Giacomo.dell.Orio --> fixed it: 
-original_summed$NAME[original_summed$NAME=='S..Giacomo.dell.Orio'] <- 'S..Giacomo.dell\'Orio'
+```{r create map objects}
+map_sf_list <- lapply(days_vec, function(selected_day) {
+  values_for_day <- map_values |>
+    filter(day_index == selected_day)
 
-# check (in)compatibility of names 
-sum(!(original_summed$NAME %in% shap@data$NAME)) # -- not bad ;), 0 mismatch!
-
-### view mismatches ### 
-View(shap@data[!(shap@data$NAME %in% original_summed$NAME),]) # 15 parishes 
-View(original_summed[!(original_summed$NAME %in% shap@data$NAME),])
+  shape_sf |>
+    left_join(values_for_day, by = "parish_key")
+})
 ```
 
-fix col names to match names in dataset aggregated >> over month <<
+Save the data.
 
-```{r choropleth fix col names month, eval = FALSE}
-# the only problematic one is S..Giacomo.dell.Orio --> fixed it: 
-agg_df$NAME[agg_df$NAME=='S..Giacomo.dell.Orio'] <- 'S..Giacomo.dell\'Orio'
-## check (in)compatibility of names 
-sum(!(agg_df$NAME %in% shap@data$NAME)) # -- not bad ;), 0 mismatch!
-
-### view mismatches ### 
-View(shap@data[!(shap@data$NAME %in% agg_df$NAME),]) # 15 parishes have no deaths counts -- it's fine
-View(agg_df[!(agg_df$NAME %in% shap@data$NAME),1:2]) 
+```{r save choropleth data}
+figure1_map_source <- map_values |>
+  filter(day_index %in% days_vec) |>
+  select(
+    date = Date,
+    parish = parish_data,
+    population_people,
+    daily_deaths,
+    cumulative_deaths,
+    cumulative_mortality
+  )
 ```
 
-merge data summed over --> all time window <--
+Set up the legend and color scale.
 
-```{r choropleth merge data all-time, eval = FALSE}
-# keep track of original sorting -- before merging!!
-shap@data$id = rownames(shap@data)
+```{r plot choropleths}
+tmap_mode("plot")
 
-# actual merging
-shap@data = merge(shap@data,original_summed,
-                  by = 'NAME',all.x = TRUE,all.y = TRUE,sort = FALSE)
-
-# set id as numeric 
-shap@data$id = as.numeric(as.character(shap@data$id))
-# order df using previous id 
-shap@data = shap@data[order(shap@data$id),]
-```
-
-merge data aggregated --> over months <--
-
-```{r choropleth merge data months, eval = FALSE}
-
-# keep track of original sorting -- before merging!!
-#shap@data$id = rownames(shap@data) **Original Code**
-shap@data$id = shap@data$id+1
-
-# actual merging
-shap@data = merge(shap@data,agg_df,
-                  by = 'NAME',all.x = TRUE,sort = FALSE)
-
-# set id as numeric 
-shap@data$id = as.numeric(as.character(shap@data$id))
-# order df using previous id 
-shap@data = shap@data[order(shap@data$id),]
-
-# set deaths data as numeric
-shap@data[,3:ncol(shap@data)] = sapply(shap@data[,3:ncol(shap@data)],as.numeric)
-
-# fix col names
-months_names <- c(
-    "Jan 1629","Feb 1629","Mar 1629","Apr 1629","May 1629","Jun 1629","Jul 1629", "Aug 1629","Sep 1629","Oct 1629", "Nov 1629","Dec 1629", "Jan 1630","Feb 1630","Mar 1630","Apr 1630","May 1630","Jun 1630","Jul 1630", "Aug 1630","Sep 1630","Oct 1630", "Nov 1630","Dec 1630", "Jan 1631","Feb 1631","Mar 1631","Apr 1631","May 1631","Jun 1631","Jul 1631", "Aug 1631","Sep 1631","Oct 1631", "Nov 1631","Dec 1631"
-)
-# months_names <- c(
-#     "Cumulative Mortality up to Jan 1629","Cumulative Mortality up to Feb 1629","Cumulative Mortality up to Mar 1629","Cumulative Mortality up to Apr 1629","Cumulative Mortality up to May 1629","Cumulative Mortality up to Jun 1629","Cumulative Mortality up to Jul 1629", "Cumulative Mortality up to Aug 1629","Cumulative Mortality up to Sep 1629","Cumulative Mortality up to Oct 1629", "Cumulative Mortality up to Nov 1629","Cumulative Mortality up to Dec 1629", "Cumulative Mortality up to Jan 1630","Cumulative Mortality up to Feb 1630","Cumulative Mortality up to Mar 1630","Cumulative Mortality up to Apr 1630","Cumulative Mortality up to May 1630","Cumulative Mortality up to Jun 1630","Cumulative Mortality up to Jul 1630", "Cumulative Mortality up to Aug 1630","Cumulative Mortality up to Sep 1630","Cumulative Mortality up to Oct 1630", "Cumulative Mortality up to Nov 1630","Cumulative Mortality up to Dec 1630", "Cumulative Mortality up to Jan 1631","Cumulative Mortality up to Feb 1631","Cumulative Mortality up to Mar 1631","Cumulative Mortality up to Apr 1631","Cumulative Mortality up to May 1631","Cumulative Mortality up to Jun 1631","Cumulative Mortality up to Jul 1631", "Cumulative Mortality up to Aug 1631","Cumulative Mortality up to Sep 1631","Cumulative Mortality up to Oct 1631", "Cumulative Mortality up to Nov 1631","Cumulative Mortality up to Dec 1631"
-# )
-
-colnames(shap@data) <- c(c('NAME','id',"Total_deaths"),months_names)
-
-
-View(shap@data)
-```
-
-##### Plot cases on map
-
-(doc for space analysis/plot in R: <https://cran.r-project.org/doc/contrib/intro-spatial-rl.pdf> )
-
-in order to simplify the plot, we keep only labels for parishes with: N deaths > cut-off
-
-```{r choropleth plot cases, eval = FALSE}
-# names_cutoff = 
-
-# for(i in 1:length(original_summed$Total_deaths)){
-#   if(is.na(original_summed$Total_deaths[i])){
-#     original_summed$Total_deaths[i] <- 0
-#   }
-# }
-# original_summed$Total_deaths
-# rownames(original_summed) <- gsub("S..Giacomo.dell.Orio","S..Giacomo.dell\'Orio",rownames(original_summed))
-
-my_name = function(x,cutoff=1000){
-    # if(!x %in% rownames(original_summed)){
-    #   print(x)
-    #   return(NA)
-    # }
-    # if ((original_summed$Total_deaths[rownames(original_summed)==x] > cutoff) & 
-    #     !is.na(original_summed$Total_deaths[rownames(original_summed)==x])){
-    #     return(x)
-    # }
-    if ((shap@data$Total_deaths[shap@data$NAME==x] > cutoff) & 
-        !is.na(shap@data$Total_deaths[shap@data$NAME==x])){
-        return(x)
-    }
-    else{
-        return(NA)
-    }
-    
-}
-
-shap@data$names_cutoff = sapply(shap@data$NAME,my_name)
-
-# shap@data <- shap@data[-c(71:85),]
-#shap@data <- shap@data[order(shap@data$NAME),] #needs to be reordered somehow
-invperm <- read.csv("~/LegacyVeniceParishMaps/invperm.csv")
-invperm <- invperm$x
-#shap@data <- shap@data[shap@plotOrder,]
-#shap@data <- shap@data[invperm,]#seems to have no effect while the other permutations of the elements did?
-View(shap@data)
-
-```
-
-Import population data and convert to mortality data
-
-```{r choropleth import population data, eval = FALSE}
-population_pre <- read.csv("~/VenetianPlague_Entropy/ParishPopulationsPre.csv")
-population_post <- read.csv("~/VenetianPlague_Entropy/ParishPopulationsPost.csv")
-population <- read.csv("ParishPopulations.csv")
-filled <- read.csv("~/VenetianPlague_Entropy/filledna_full_ts.csv")
-
-# Fix the Dates on filled
-colnames(filled)[1] <- "Date"
-filled$Date <- as.Date(filled$Date, format = "%Y-%m-%d")
-
-# Fix the parish name artifacts in filled (import_csv replaces spaces with periods)
-colnames(filled) <- sub("^S\\.", "S", colnames(filled))
-
-# Remove diacritics
-colnames(filled) <- stri_trans_general(colnames(filled), id = "Latin-ASCII")
-
-# Convert mortality data in filled into integer types
-for(column in 1:ncol(filled)){
-  if(column == 1){
-    next
-  }
-  if(!(is.integer(filled[, column]))){
-    filled[, column] = as.integer(filled[,column])
-  }
-}
-
-colnames(population_pre) <- c("Parish", "Population_1509", "Population_1551", "Population_1581", "Population_1586")
-
-population_pre$Parish <- gsub("[[:space:]]",".",population_pre$Parish)
-population_pre$Parish <- stri_trans_general(population_pre$Parish, id = "Latin-ASCII")
-
-population_post$Parish <- gsub("[[:space:]]",".",population_post$Parish)
-population_post$Parish <- stri_trans_general(population_post$Parish, id = "Latin-ASCII")
-
-# Identify and remove the parishes that are not contained in both the 
-# 1586 census and the 1696 census
-remove_vec <- c()
-for(i in 1:length(population_pre$Parish)){
-  if(!(population_pre$Parish[i] %in% population_post$Parish)){
-    remove_vec <- c(remove_vec,i)
-  }
-}
-
-if(length(remove_vec) > 0){
-  population_pre <- population_pre[-remove_vec,]
-}
-
-remove_vec <- c()
-for(i in 1:length(population_post$Parish)){
-  if(!(population_post$Parish[i] %in% population_pre$Parish)){
-    remove_vec <- c(remove_vec, i)
-  }
-}
-
-if(length(remove_vec) > 0){
-  population_post <- population_post[-remove_vec,]
-}
-
-# Establish a consistent ordering of the parishes (alphabetical)
-population_post <- population_post %>% arrange(Parish)
-population_pre <- population_pre %>% arrange(Parish)
-
-# Remove the 1509 census data because the vast majority of values are NAs
-population_pre <- population_pre[,-2]
-
-non_NAs <- c()
-for(i in 1:length(shap@data$NAME)){
-  if(length(which(!is.na(shap@data[i,4:ncol(shap@data)]))) != 0){
-    non_NAs <- c(non_NAs,i)
-  }
-}
-
-for(i in 1:length(shap@data$NAME[non_NAs])){
-  if(!shap@data$NAME[non_NAs][i] %in% population_pre$Parish){
-    print(shap@data$NAME[non_NAs][i])
-  }
-}
-
-population_pre$Parish <- gsub("S..Giacomo.dell.Orio","S..Giacomo.dell\'Orio",population_pre$Parish)
-
-for(i in 1:length(shap@data$NAME[non_NAs])){
-  if(!shap@data$NAME[non_NAs][i] %in% population_post$Parish){
-    print(shap@data$NAME[non_NAs][i])
-  }
-}
-
-for(j in 1:ncol(population_pre)){
-  if(j == 1){
-    next
-  }
-  for(i in 1:nrow(population_pre)){
-    population_pre[i,j] <- format(as.numeric(population_pre[i,j]),nsmall=3)
-    if(nchar(population_pre[i,j]) < 7){
-      population_pre[i,j] <- as.numeric(population_pre[i,j])*1000
-    } else {
-      population_pre[i,j] <- as.numeric(population_pre[i,j])
-    }
-  }
-  population_pre[,j] <- as.numeric(population_pre[,j])
-}
-
-population_post$Population <- as.numeric(population_post$Population) * 1000
-
-# Merge population_pre and population_post into one dataframe, population_df
-population_df <- as.data.frame(cbind(population_pre, population_post[,-1]))
-colnames(population_df) <- c("Parish", "Population_1551", "Population_1581", 
-                             "Population_1586", "Population_1696")
-
-interpolated_1629 <- as.numeric(population_df$Population_1586) + (43 / 110) * (population_df$Population_1696 - population_df$Population_1586)
-
-population <- data.frame(population_post$Parish, interpolated_1629 / 1000)
-colnames(population) <- c("Parish","Population")
-population_specified <- population[population$Parish %in% colnames(filled[,-1]),]
-population_specified <- population_specified[match(colnames(filled[,-1]), population_specified$Parish),]
-
-# Organize shap@data by NAME (parish name) and remove the parishes not in filled
-
-#shap@data %>% arrange(NAME)
-
-#remove_vec <- c()
-#for(i in 1:length(shap@data$NAME)){
-#  if(!(shap@data$NAME[i] %in% population_specified$Parish)){
-#    remove_vec <- c(remove_vec,i)
-#  }
-#}
-
-#if(length(remove_vec) > 0){
-#  shap@data <- shap@data[-remove_vec,]
-#}
-
-for(i in 1:nrow(shap@data)){
-  if(shap@data$NAME[i] %in% population_specified$Parish){
-    # print(shap@data$NAME[i])
-    # print(match(shap@data$NAME[i],interpolated_1629$Parish))
-    shap@data[i,3:(ncol(shap@data)-1)] <- shap@data[i,3:(ncol(shap@data)-1)]/population_specified$Population[match(shap@data$NAME[i],population_specified$Parish)]
-  }
-}
-```
-
-Convert to cumulative mortality data
-
-```{r choropleth convert to cumulative, eval = FALSE}
-for(i in 1:nrow(shap@data)){ #comment this part out if you want instantaneous
-  shap@data[i,4:(ncol(shap@data)-1)] <- cumsum(as.numeric(shap@data[i,4:(ncol(shap@data)-1)]))
-}
-```
-
-map cases >>> by month <<<
-
-```{r choropleth map cases monthly, eval = FALSE}
-library(sf)
-pdf('map_monthly_cases.pdf',height = 6, width = 12)
-#require(sf)
-
-#shap@data <- shap@data[,which(!is.na(colnames(shap@data)))]
-#shap@data$Total_deaths <- c(original_summed$Total_deaths[match(rownames(original_summed),shap@data$NAME)],rep(0,15))
-
-sf_use_s2(FALSE) #does this screw something up
-# (parishes names makes plot unreadable)
-
-#monthlyshannon <- read.csv("~/LegacyVeniceParishMaps/monthlyshannon.csv")
-#monthlyshannon <- read.csv("~/LegacyVeniceParishMaps/monthlyshannonvec2.csv")
-monthlyshannon <- read.csv("~/LegacyVeniceParishMaps/monthlyshannonvec3.csv")
-monthlyshannon <- monthlyshannon$x
-
-# for(i in 1:length(colnames(shap@data)[20:(ncol(shap@data)-1)])){
-#   colnames(shap@data)[20:(ncol(shap@data)-1)][i] <- paste(colnames(shap@data)[20:(ncol(shap@data)-1)][i],round(monthlyshannon[i],2)) 
-# }
-full_months_names <- c(
-    "January 1629","February 1629","March 1629","April 1629","May 1629","June 1629","July 1629", "August 1629","September 1629","October 1629", "November 1629","December 1629", "January 1630","February 1630","March 1630","April 1630","May 1630","June 1630","July 1630", "August 1630","September 1630","October 1630", "November 1630","December 1630", "January 1631","February 1631","March 1631","April 1631","May 1631","June 1631","July 1631", "August 1631","September 1631","October 1631", "November 1631","December 1631"
+map_breaks <- seq(0, 0.7, by = 0.1)
+map_labels <- sprintf(
+  "%.1f-%.1f",
+  head(map_breaks, -1),
+  tail(map_breaks, -1)
 )
 
-shap@data[1,] <- c("S..Marco",1,rep(as.numeric(NA),38)) 
-shap@data[21,] <- c("S..Polo",21,rep(as.numeric(NA),38)) 
-shap@data[29,] <- c("S..Stae",29,rep(as.numeric(NA),38))
+map_colors <- viridisLite::viridis(
+  n = length(map_labels),
+  option = "D",
+  begin = 0.05,
+  end = 0.95
+)
 
-for(i in 2:39){
-  shap@data[,i] <- as.numeric(shap@data[,i])
+mortality_scale <- function() {
+  tm_scale_intervals(
+    style = "fixed",
+    breaks = map_breaks,
+    labels = map_labels,
+    values = map_colors,
+    value.na = "#BDBDBD",
+    label.na = "Missing"
+  )
+}
+```
+
+Create the plots without individual legends.
+
+```{r create individual choropleths}
+make_map_panel <- function(map_data) {
+  tm_shape(map_data) +
+    tm_polygons(
+      fill = "cumulative_mortality",
+      fill.scale = mortality_scale(),
+      fill.legend = tm_legend_hide(),
+      col = "white",
+      lwd = 0.4
+    ) +
+    tm_layout(
+      frame = FALSE,
+      bg.color = "white",
+      text.fontfamily = "Helvetica",
+
+      # Add internal room around the map
+      inner.margins = c(0.04, 0.04, 0.04, 0.04),
+      outer.margins = c(0.01, 0.01, 0.01, 0.01)
+    )
 }
 
-pl <- list()
-for(i in (4:(ncol(shap@data)-1))){
-  # pl <- c(pl,list(qtm(shap,fill = colnames(shap@data)[i],fill.n=8,fill.breaks=seq(0,0.7,length.out=8))+tm_legend(legend.position=c("right","top"),scale=0.8)))
-  pl <- c(pl,list(qtm(shap,fill = colnames(shap@data)[i],fill.n=8,fill.breaks=seq(0,0.7,length.out=8))+tm_legend(legend.position=c("right","top"),scale=0.8)+tm_layout(frame=FALSE))) #,main.title=paste("Distribution of Cumulative Mortality up to",full_months_names[i-3]),main.title.size=3))) #"with Instantaneous Entropy of",round(monthlyshannon[i-3],2))
+map_tm_list <- lapply(map_sf_list, make_map_panel)
+map_grob_list <- lapply(map_tm_list, tmap_grob)
+
+make_map <- function(map_data) {
+  tm_shape(map_data) +
+    tm_polygons(
+      fill = "cumulative_mortality",
+      col = "white",
+      lwd = 0.4,
+      fill.scale = tm_scale_intervals(
+        style = "fixed",
+        breaks = map_breaks,
+        values = map_colors
+      ),
+      fill.legend = tm_legend(
+        title = "Cumulative mortality",
+        position = tm_pos_in("right", "top"),
+        title.size = 0.65,
+        text.size = 0.55,
+        title.fontfamily = "Helvetica",
+        text.fontfamily = "Helvetica",
+        frame = FALSE
+      )
+    ) +
+    tm_layout(
+      text.fontfamily = "Helvetica",
+      frame = FALSE,
+      bg.color = "white",
+      outer.margins = c(0, 0, 0, 0),
+      inner.margins = c(0.01, 0.01, 0.01, 0.01)
+    )
 }
 
-# plot_list3 <- list(plot1=pl[[18]],plot2=pl[[24]],plot3=pl[[34]])
-# save(plot_list3,file="plot_list3.RData")
-# print(plot_list3)
-# plot_list4 <- list(plot1=pl[[6]],plot2=pl[[24]],plot3=pl[[34]])
-# save(plot_list4,file="plot_list4.RData")
-# print(plot_list4)
-# plot_list5 <- list(plot1=pl[[3]],plot2=pl[[22]],plot3=pl[[36]])
-# save(plot_list5,file="plot_list5.RData")
-# plot_list6 <- list(plot1=pl[[2]],plot2=pl[[22]],plot3=pl[[36]])
-# print(plot_list6)
-#save(plot_list6,file="plot_list6.RData")
-```
-Save the choropleth plots for Figure 1.
-```{r choropleth save plot, eval = FALSE}
-plot_list7 <- list(plot1=pl[[1]],plot2=pl[[22]],plot3=pl[[36]])
-print(plot_list7)
-save(plot_list7,file="plot_list7.RData")
-
-tmap_save(tmap_arrange(pl[[18]],pl[[24]],pl[[34]],ncol=3),filename="gridof3.png",width=2560,height=900,units="px")
-```
-Create the GIF (Supplentary Video S1).
-```{r choropleth create GIF, eval = FALSE}
-#current.mode <- tmap_mode("plot")
-#tmap_save(tmap_arrange(pl[[9]],pl[[18]],pl[[27]],pl[[36]]),filename="gridmap_final.png",width=2560,height=1600,units="px")
-#tmap_mode(current.mode)
-
-
-#tmap_animation(pl,width=1920,height=1080,filename="incidencemap_final.gif")
-
-qtm(shap,fill = colnames(shap@data)[20:(ncol(shap@data)-1)],fill.n=8,fill.breaks=seq(0,0.7,length.out=8))
-
-#names_cutoff is wrong because the cutoff is based on total cases not incidence rate
-#Also change variable to say Cumulative_incidence_rate not Total_deaths
-
-dev.off()
-
-### testing on single month 
-# qtm(shap, text = 'NAME', text.size = 0.5, fill = c('january 1631'))
+map_plots <- lapply(map_sf_list, make_map)
 ```
 
-map with labels >>> total cases <<<
+Add the dates above the maps.
 
-```{r choropleth map with labels, eval = FALSE}
-pdf('map_total_cases_with_labels.pdf',height = 6, width = 12)
+```{r add dates to choropleths}
+historical_date_label <- function(x) {
+  x <- as.Date(x)
 
-tm_shape(shap) + tm_fill('Total_deaths') + tm_text('NAME', size = 0.5 , col = 'black') + tm_layout(bg.color="lightblue") 
+  # Remove the leading zero from the day
+  sub(
+    " 0",
+    " ",
+    format(x, "%B %d, %Y"),
+    fixed = TRUE
+  )
+}
 
-## saving
-dev.off()
+map_date_labels <- historical_date_label(
+  filled$Date[days_vec]
+)
+
+dated_map_grobs <- Map(
+  function(map_grob, date_label) {
+    date_header <- ggdraw() +
+      draw_label(
+        date_label,
+        fontfamily = "sans",
+        fontface = "plain",
+        size = 7,
+        x = 0.5,
+        hjust = 0.5
+      )
+
+    plot_grid(
+      date_header,
+      map_grob,
+      ncol = 1,
+      rel_heights = c(0.10, 1)
+    )
+  },
+  map_grob_list,
+  map_date_labels
+)
 ```
 
-here we fix the text going over boundary -- in the two-row name (fttb, we change only the only problematic one)
+Scale the maps down.
 
-```{r choropleth fix text, eval = FALSE}
-shap@data$names_cutoff[shap@data$NAME=='S..Pietro.di.Castello'] = 'S..Pietro\ndi.Castello'
-
-View(shap@data[shap@data$NAME=='S..Pietro.di.Castello',])
+```{r scale choropleth maps}
+maps_only_row <- plot_grid(
+  plotlist = dated_map_grobs,
+  ncol = 3,
+  align = "hv",
+  scale = 0.88
+)
 ```
 
-map with labels >>> total cases <<< -- version with less (cutoff) labels
+Create the legend and combine.
 
-```{r choropleth map reduced labels, eval = FALSE}
-pdf('map_total_cases_with_labels_cutoff.pdf',height = 6, width = 12)
-# qtm(shap,'Total_deaths',text = 'names_cutoff', text.size = 0.8,text.col = 'black')
+```{r create choropleth legend}
+shared_legend_tm <- tm_shape(map_sf_list[[3]]) +
+  tm_polygons(
+    fill = "cumulative_mortality",
+    fill.scale = mortality_scale(),
+    fill.legend = tm_legend(
+      title = "Cumulative mortality",
+      orientation = "landscape",
+      title.size = 0.60,
+      text.size = 0.50,
+      title.fontfamily = "Helvetica",
+      text.fontfamily = "Helvetica",
+      frame = FALSE
+    ),
+    col = NA
+  ) +
+  tm_layout(
+    legend.only = TRUE,
+    frame = FALSE,
+    text.fontfamily = "Helvetica",
+    outer.margins = c(0, 0, 0, 0)
+  )
 
-tm_shape(shap) + tm_fill('Total_deaths') + tm_text('names_cutoff', size = 0.8 , col = 'black') + tm_layout(bg.color="lightblue")
+shared_legend_grob <- tmap_grob(shared_legend_tm)
 
-
-## saving
-dev.off()
-```
-
-map total cases without labels
-
-```{r choropleth total cases no labels, eval = FALSE}
-# pdf('map_total_cases_no_labels.pdf',height = 6, width = 12)
-qtm(shap,'Total_deaths')
-
-#TWO THINGS TO FIX: 1. the names are mixed up 2. the colors are in the wrong place
-
-## saving
-dev.off()
+map_row <- plot_grid(
+  maps_only_row,
+  shared_legend_grob,
+  ncol = 1,
+  rel_heights = c(1, 0.20)
+)
 ```
 
 ### PDF and Quantile Graphs
@@ -2734,7 +2789,7 @@ grobbed_tmap_list <- vector(mode = "list", length = 3)
 title_list <- vector(mode = "list", length = 3)
 
 # Choropleth plot
-load(file = "~/Downloads/plot_list7.RData")
+map_plot_list <- map_plots
 
 # for(i in 1:length(end_of_month_indices)){
 #   day <- end_of_month_indices[i]
@@ -2773,6 +2828,9 @@ sort(coeff_var_mat[,3], decreasing = FALSE)[975] #October 31, 1630 high
 Produce the graphs for the PDF and inverse CDF.
 
 ```{r produce pdf and quantile graphs}
+quantile_source_list <- vector("list", length(days_vec))
+pdf_source_list <- vector("list", length(days_vec))
+
 for(i in days_vec){
   day <- i
   case_vec <- as.numeric(colSums(filled_modified[1:day,-1])) / (population_specified_modified$Population * 1000)
@@ -2808,20 +2866,11 @@ for(i in days_vec){
         fill = "red",
         alpha = 0.25
       ) +
-      labs(y = "Normalized Mortality", x = "Parishes Ranked by Mortality") +
+      labs(y = "Normalized mortality", x = "Parishes ranked by mortality") +
       coord_cartesian(ylim = c(0, 0.15)) +
-      theme_bw() +
-      theme(
-        panel.grid.major = element_blank(),
-        panel.grid.minor = element_blank(),
-        panel.background = element_blank(),
-        axis.text.x = element_blank(),
-        axis.ticks.x = element_blank(),
-        plot.margin = margin(5.5, 5.5, 5.5, 5.5),
-        axis.title = element_text(size = 10)
-      )
+      plot_theme()
     # Only title the first graph to avoid redundancy
-    quantile_graph <- quantile_graph + ggtitle("Quantile Function")
+    quantile_graph <- quantile_graph + ggtitle("Inverse CDF")
   } else {
     quantile_graph <-
       ggplot(data = q_func_df, aes(y = q_func, x = seq(1, ncol(filled_modified[, -1])))) +
@@ -2832,18 +2881,9 @@ for(i in days_vec){
         fill = "red",
         alpha = 0.25
       ) +
-      labs(y = "Normalized Mortality", x = "Parishes Ranked by Mortality") +
+      labs(y = "Normalized mortality", x = "Parishes ranked by mortality") +
       coord_cartesian(ylim = c(0, 0.04)) +
-      theme_bw() +
-      theme(
-        panel.grid.major = element_blank(),
-        panel.grid.minor = element_blank(),
-        panel.background = element_blank(),
-        axis.text.x = element_blank(),
-        axis.ticks.x = element_blank(),
-        plot.margin = margin(5.5, 5.5, 5.5, 5.5),
-        axis.title = element_text(size = 10)
-      )
+      plot_theme()
   }
   
   # Generate PDF graphs
@@ -2876,16 +2916,9 @@ for(i in days_vec){
         alpha = 0.25,
         lwd = 0.25
       ) +
-      labs(y = "Normalized Parish Count", x = "Cumulative Mortality") +
+      labs(y = "Normalized parish count", x = "Cumulative mortality") +
       coord_cartesian(ylim = c(0, 0.01)) +
-      theme_bw() +
-      theme(
-        panel.grid.major = element_blank(),
-        panel.grid.minor = element_blank(),
-        panel.background = element_blank(),
-        plot.margin = margin(5.5, 5.5, 5.5, 5.5),
-        axis.title = element_text(size = 10)
-      )
+      plot_theme()
     # Only title the first graph to avoid redundancy
     PDF_graph <- PDF_graph + ggtitle("PDF")
   } else {
@@ -2903,107 +2936,91 @@ for(i in days_vec){
         alpha = 0.25,
         lwd = 0.25
       ) +
-      labs(y = "Normalized Parish Count", x = "Cumulative Mortality") +
+      labs(y = "Normalized parish count", x = "Cumulative mortality") +
       coord_cartesian(ylim = c(0, 0.006)) +
-      theme_bw() +
-      theme(
-        panel.grid.major = element_blank(),
-        panel.grid.minor = element_blank(),
-        panel.background = element_blank(),
-        plot.margin = margin(5.5, 5.5, 5.5, 5.5),
-        axis.title = element_text(size = 10)
-      )
+      plot_theme()
   }
   quantile_graph_list[[match(i, days_vec)]] <- quantile_graph
-  
-  if(match(i,days_vec) == 1){
-    tmap_plot <- plot_list7[[match(i, days_vec)]] +
-      tm_layout(
-        # Add spaces to the title to align the title with the other two
-        main.title="    Choropleth Map",
-        main.title.size=1.1,
-        #legend.text.size = .55,
-        outer.margins = c(0, 0, 0, 0),
-        inner.margins = c(0, 0, 0, 0),
-        frame = FALSE
-      )
-  } else{
-    tmap_plot <- plot_list7[[match(i, days_vec)]] +
-      tm_layout(
-        main.title = " ",
-        main.title.size = 1.1,
-        #legend.text.size = .55,
-        outer.margins = c(0, 0, 0, 0),
-        inner.margins = c(0, 0, 0, 0),
-        frame = FALSE
-      )
-  }
-  grobbed_tmap_plot <- tmap_grob(tmap_plot)
-
-  grobbed_tmap_list[[match(i, days_vec)]] <- grobbed_tmap_plot
 
   PDF_graph_list[[match(i, days_vec)]] <- PDF_graph
   
   PDF_and_quantile_graph <- plot_grid(plotlist = list(PDF_graph,quantile_graph))
   
-  #untitled_grid <- plot_grid(plotlist=list(PDF_and_quantile_graph,heatmap_plot))
-  
-  title <- ggdraw() + 
-    draw_label(
-      filled$Date[day],
-      fontface = 'bold',
-      x = 0,
-      hjust = 0
-    ) +
-    theme(
-      # add margin on the left of the drawing canvas,
-      # so title is aligned with left edge of first plot
-      plot.margin = margin(0, 0, 0, 7)
-    )
-  title_list[[match(i,days_vec)]] <- title
-  overall_graph <- plot_grid(
-    title, PDF_and_quantile_graph,
-    ncol = 1, nrow = 2,
-    # rel_heights values control vertical title margins
-    rel_heights = c(0.1, 1)
+  # Save data for quantile function and PDF graphs
+  m <- match(i, days_vec)
+
+  quantile_source_list[[m]] <- data.frame(
+    panel = "b",
+    date = filled$Date[day],
+    data_type = "quantile",
+    parish = NA_character_,
+    rank = seq_along(q_func),
+    x = NA_real_,
+    observed = q_func,
+    reference = max_ent_uniform
   )
-  print(overall_graph)
+  
+  pdf_source_list[[m]] <- data.frame(
+    panel = "c",
+    date = filled$Date[day],
+    data_type = "PDF",
+    parish = NA_character_,
+    rank = NA_integer_,
+    x = bins3,
+    observed = pdf_vec_2,
+    reference = max_ent_normal
+  )
 }
 par(mfrow = c(1, 1)) #reset default gridding layout
 
 # Initialize lists to construct the 3x3 grid
 master_plot_list <- vector(mode = "list", length = 9)
-master_plot_list_1 <- vector(mode = "list", length = 3)
 master_plot_list_2 <- vector(mode = "list", length = 3)
 master_plot_list_3 <- vector(mode = "list", length = 3)
 
-# First, append all of the choropleth maps
-for(k in 1:length(days_vec)){
-  master_plot_list[[k]] <- grobbed_tmap_list[[k]]
-  master_plot_list_1[[k]] <- grobbed_tmap_list[[k]]
-}
-
-# Next, append all of the quantile function figures
+# First, append all of the quantile function figures
 for(k in 4:6){
   master_plot_list[[k]] <- quantile_graph_list[[k-3]]
   master_plot_list_2[[k-3]] <- quantile_graph_list[[k-3]]
 }
 
-# Finally, append all of the PDF figures
+# Then, append all of the PDF figures
 for(k in 7:9){
   master_plot_list[[k]] <- PDF_graph_list[[k-6]]
   master_plot_list_3[[k-6]] <- PDF_graph_list[[k-6]]
 }
 
 # Group by row and give the corresponding label to the first graph of every row
-plot_grid_1 <- plot_grid(plotlist = master_plot_list_1, ncol = 3, nrow = 1, align = "hv", axis = "tblr", labels = c("a", "", ""), label_size = 12)
-plot_grid_2 <- plot_grid(plotlist = master_plot_list_2, ncol = 3, nrow = 1, align = "hv", axis = "tblr", labels = c("b", "", ""), label_size = 12)
-plot_grid_3 <- plot_grid(plotlist = master_plot_list_3, ncol = 3, nrow = 1, align = "hv", axis = "tblr", labels = c("c", "", ""), label_size = 12)
+quantile_row <- plot_grid(
+  plotlist = master_plot_list_2,
+  ncol = 3,
+  align = "hv",
+  axis = "tblr"
+)
+
+pdf_row <- plot_grid(
+  plotlist = master_plot_list_3,
+  ncol = 3,
+  align = "hv",
+  axis = "tblr"
+)
 
 # Generate the final plot as a group of the three rows
-plot_grid(plot_grid_1, plot_grid_2, plot_grid_3, nrow = 3, align = "hv", axis = "tblr")
-
-plot_grid(plotlist = master_plot_list, ncol = 3, nrow = 3, align = 'hv', axis = 'tblr', labels = c("a", "", "", "b", "", "", "c", "", ""), label_size = 12)
+figure1_final <- plot_grid(
+  map_row,
+  quantile_row,
+  pdf_row,
+  ncol = 1,
+  rel_heights = c(1.15, 1, 1),
+  labels = c("a", "b", "c"),
+  label_size = 8,
+  label_fontfamily = "Helvetica",
+  label_fontface = "bold",
+  label_x = 0.01,
+  label_y = 0.99,
+  hjust = 0,
+  vjust = 1
+)
 
 # Save the figure
 
@@ -3012,10 +3029,12 @@ ggsave(
     "Figures_Final_v2",
     "Figure1.pdf"
   ),
-  width = 3000,
-  height = 1800,
-  units = "px",
+  plot = figure1_final,
+  width = 179,
+  height = 179,
+  units = "mm",
   dpi = 300,
+  device = cairo_pdf,
   bg = "white"
 )
 
@@ -3024,15 +3043,374 @@ ggsave(
     "Figures_Final_v2",
     "Figure1.png"
   ),
-  width = 3000,
-  height = 1800,
-  units = "px",
+  plot = figure1_final,
+  width = 179,
+  height = 179,
+  units = "mm",
   dpi = 300,
   bg = "white"
 )
 
 # plot.ts(new_negent,col="red",ylim=c(0,2))
 # lines(old_negent)
+```
+
+Save figure 1 data.
+
+```{r save figure 1 data}
+# Convert historical dates to text for correct Excel rendering
+historical_date_text <- function(x, style = "long") {
+  if (!inherits(x, "Date")) {
+    x <- as.Date(x, origin = "1970-01-01")
+  }
+
+  if (style == "numeric") {
+    return(format(x, "%m-%d-%Y"))
+  }
+
+  sub(
+    " 0",
+    " ",
+    format(x, "%B %d, %Y"),
+    fixed = TRUE
+  )
+}
+
+# Create a separate table for each panel
+
+figure1_panel_a <- figure1_map_source %>%
+  transmute(
+    date = historical_date_text(date, "long"),
+    parish,
+    population_people,
+    daily_deaths,
+    cumulative_deaths,
+    cumulative_mortality
+  )
+
+figure1_panel_b <- bind_rows(quantile_source_list) %>%
+  transmute(
+    date = historical_date_text(date, "long"),
+    parish_rank = rank,
+    normalized_mortality = observed,
+    uniform_reference = reference
+  )
+
+figure1_panel_c <- bind_rows(pdf_source_list) %>%
+  transmute(
+    date = historical_date_text(date, "long"),
+    cumulative_mortality = x,
+    estimated_pdf = observed,
+    gaussian_reference = reference
+  )
+
+# Add it to the workbook
+
+addWorksheet(
+  wb,
+  "Figure 1",
+  gridLines = FALSE
+)
+
+section_style <- createStyle(
+  fontName = "Helvetica",
+  fontSize = 11,
+  textDecoration = "bold",
+  fgFill = "#D9EAF7",
+  valign = "center"
+)
+
+header_style <- createStyle(
+  fontName = "Helvetica",
+  fontSize = 10,
+  textDecoration = "bold",
+  fgFill = "#5B9BD5",
+  fontColour = "#FFFFFF",
+  halign = "center",
+  valign = "center",
+  wrapText = TRUE
+)
+
+write_figure1_section <- function(
+    wb,
+    sheet,
+    title,
+    data,
+    start_row,
+    table_name
+) {
+
+  number_of_columns <- ncol(data)
+
+  # Write the standalone panel heading
+  writeData(
+    wb,
+    sheet = sheet,
+    x = title,
+    startRow = start_row,
+    startCol = 1,
+    colNames = FALSE
+  )
+
+  # Apply section styling across the width of the table
+  addStyle(
+    wb,
+    sheet = sheet,
+    style = section_style,
+    rows = start_row,
+    cols = seq_len(number_of_columns),
+    gridExpand = TRUE,
+    stack = TRUE
+  )
+
+  # Merge the section-heading cells
+  mergeCells(
+    wb,
+    sheet = sheet,
+    rows = start_row,
+    cols = seq_len(number_of_columns)
+  )
+
+  setRowHeights(
+    wb,
+    sheet = sheet,
+    rows = start_row,
+    heights = 20
+  )
+
+  # Write the actual Excel table
+  writeDataTable(
+    wb,
+    sheet = sheet,
+    x = data,
+    startRow = start_row + 1,
+    startCol = 1,
+    tableName = table_name,
+    tableStyle = "TableStyleMedium2",
+    headerStyle = header_style,
+    withFilter = TRUE
+  )
+
+  # Return the starting row for the next section
+  start_row + nrow(data) + 4
+}
+
+# Write the panel tables vertically
+
+current_row <- 1
+
+current_row <- write_figure1_section(
+  wb = wb,
+  sheet = "Figure 1",
+  title = "Panel a – Choropleth map data",
+  data = figure1_panel_a,
+  start_row = current_row,
+  table_name = "Figure1PanelA"
+)
+
+current_row <- write_figure1_section(
+  wb = wb,
+  sheet = "Figure 1",
+  title = "Panel b – Ranked mortality data",
+  data = figure1_panel_b,
+  start_row = current_row,
+  table_name = "Figure1PanelB"
+)
+
+current_row <- write_figure1_section(
+  wb = wb,
+  sheet = "Figure 1",
+  title = "Panel c – Probability density data",
+  data = figure1_panel_c,
+  start_row = current_row,
+  table_name = "Figure1PanelC"
+)
+
+# Format
+
+setColWidths(
+  wb,
+  "Figure 1",
+  cols = 1:6,
+  widths = c(20, 25, 18, 16, 20, 22)
+)
+
+setColWidths(
+  wb,
+  sheet = "Figure 1",
+  cols = 1:max(
+    ncol(figure1_panel_a),
+    ncol(figure1_panel_b),
+    ncol(figure1_panel_c)
+  ),
+  widths = "auto"
+)
+```
+
+## Supplementary Figure 1
+
+Create an animation showing the choropleth map for each month.
+
+```{r create supplementary figure 1}
+animation_values <- map_values %>%
+  mutate(
+    Date = as.Date(Date),
+    month = floor_date(Date, unit = "month")
+  ) %>%
+  # Preserve the original special treatment of January 1629
+  filter(
+    month != as.Date("1629-01-01") |
+      Date <= as.Date("1629-01-07")
+  ) %>%
+  group_by(month, parish_key) %>%
+  slice_max(
+    order_by = Date,
+    n = 1,
+    with_ties = FALSE
+  ) %>%
+  ungroup()
+
+# Complete parish-month combinations
+
+month_order <- sort(unique(animation_values$month))
+
+frame_data <- tidyr::expand_grid(
+  month = month_order,
+  parish_key = shape_sf$parish_key
+) %>%
+  left_join(
+    animation_values,
+    by = c("month", "parish_key")
+  ) %>%
+  mutate(
+    month_label = factor(
+      format(month, "%B %Y"),
+      levels = format(month_order, "%B %Y")
+    )
+  )
+
+animation_sf <- shape_sf %>%
+  select(parish_map, parish_key, geometry) %>%
+  left_join(frame_data, by = "parish_key")
+
+# Create the tmap object
+
+animation_tm <- tm_shape(animation_sf) +
+  tm_polygons(
+    fill = "cumulative_mortality",
+    fill.scale = mortality_scale(),
+    fill.free = FALSE,
+    fill.legend = tm_legend(
+      title = "Cumulative mortality",
+      position = tm_pos_in("right", "top"),
+      title.size = 0.75,
+      text.size = 0.65,
+      title.fontfamily = "Helvetica",
+      text.fontfamily = "Helvetica",
+      frame = FALSE
+    ),
+    col = "white",
+    lwd = 0.5
+  ) +
+  tm_layout(
+    frame = FALSE,
+    bg.color = "white",
+    text.fontfamily = "Helvetica",
+    panel.show = TRUE,
+    panel.label.size = 0.9,
+    panel.label.fontfamily = "Helvetica",
+    panel.label.fontface = "plain",
+    inner.margins = c(0.04, 0.15, 0.04, 0.04)
+  ) +
+  tm_animate(
+    frames = "month_label",
+    fps = 2,
+    play = "loop"
+  )
+```
+
+Create the plot.
+
+```{r plot supplementary figure 1}
+tmap_animation(
+  animation_tm,
+  filename = file.path(
+    "Figures_Final_v2",
+    "SupplementaryVideo1.mp4"
+  ),
+  width = 1920,
+  height = 1080,
+  dpi = 300
+)
+```
+
+## Export Data
+
+Export data into excel spreadsheet.
+```{r export all data}
+add_source_sheet <- function(wb, sheet_name, source_df, table_name) {
+  source_df <- source_df %>%
+    mutate(
+      date = historical_date_text(date, "long")
+    )
+
+  addWorksheet(wb, sheet_name, gridLines = FALSE)
+
+  writeDataTable(
+    wb,
+    sheet_name,
+    source_df,
+    startRow = 1,
+    startCol = 1,
+    tableName = table_name,
+    tableStyle = "TableStyleMedium2",
+    headerStyle = header_style
+  )
+
+  setColWidths(
+    wb,
+    sheet_name,
+    cols = seq_along(source_df),
+    widths = "auto"
+  )
+
+  setColWidths(
+    wb,
+    sheet_name,
+    cols = 1,
+    widths = 20
+  )
+
+  freezePane(
+    wb,
+    sheet_name,
+    firstActiveRow = 2
+  )
+}
+
+add_source_sheet(wb, "Figure 2", figure2_source, "Figure2Data")
+add_source_sheet(wb, "Figure 3", figure3_source, "Figure3Data")
+add_source_sheet(wb, "Figure 4", figure4_source, "Figure4Data")
+
+add_source_sheet(
+  wb,
+  "Supplementary Figure 2",
+  supp_figure2_source,
+  "SupplementaryFigure2Data"
+)
+
+add_source_sheet(
+  wb,
+  "Supplementary Figure 3",
+  supp_figure3_source,
+  "SupplementaryFigure3Data"
+)
+
+saveWorkbook(
+  wb,
+  file.path("Figures_Final_v2", "Source Data.xlsx"),
+  overwrite = TRUE
+)
 ```
 
 ## Supplementary Figure S7 (Mortality Graphs)
@@ -3068,15 +3446,13 @@ daily_mort_plot <- ggplot(mort_df)+
   geom_rect(data = regions, inherit.aes = FALSE, mapping = aes(xmin = x1, xmax = x2, ymin = y1, ymax = y2),color = "transparent",fill = "blue", alpha = 0.2)+
   geom_line(aes(x = as.Date(Date), y = Mort))+
   labs(x = "Date", y = "Mean Daily Parish Mortality", title = "Daily Mortality")+
-  theme_bw()+
-  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.title = element_text(size = 10))
+  plot_theme()
 
 cumulative_mort_plot <- ggplot(mort_df)+
   geom_rect(data = regions, inherit.aes = FALSE, mapping = aes(xmin = x1, xmax = x2, ymin = y1, ymax = y2), color = "transparent", fill = "blue", alpha = 0.2)+
   geom_line(aes(x = as.Date(Date), y = CumMort))+
   labs(x = "Date", y = "Mean Cumulative Parish Mortality", title = "Cumulative Mortality")+
-  theme_bw()+
-  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.title = element_text(size = 10))
+  plot_theme()
 
 untitled_grid <- plot_grid(plotlist = list(daily_mort_plot, cumulative_mort_plot),labels = c("a", "b"), label_size = 12)
 
@@ -3105,10 +3481,9 @@ ggsave(
     "Figures_Final_v2",
     "SuppFig7.pdf"
   ),
-  width = 2200,
-  height = 1080,
-  units = "px",
-  dpi = 300,
+  width = 180,
+  height = 108,
+  units = "mm",
   bg = "white"
 )
 
@@ -3117,9 +3492,9 @@ ggsave(
     "Figures_Final_v2",
     "SuppFig7.png"
   ),
-  width = 2200,
-  height = 1080,
-  units = "px",
+  width = 180,
+  height = 108,
+  units = "mm",
   dpi = 300,
   bg = "white"
 )
