@@ -2,12 +2,12 @@
 
 ## Project Overview
 
-Precise modeling of epidemic spread is difficult. One explanation is that disease spread is inherently stochastic. This would suggest that the distribution of cases across geographic regions would progress towards that more favored by chance. If the epidemic proceeds long enough, the allocation of cases could approach that most expected, maximizing Boltzmann–Gibbs–Shannon entropy. Here, we tested these hypotheses on mortality data from the Venetian 1630–1631 plague epidemic. Entropy per case (intensive) of the quantile function (distribution of parishes ranked by case rates) increased from an effective number of 7.32 parishes (95% CI 3.32–12.55 parishes) to 47.9 parishes (47.5–48.9 parishes) out of 50 total, indicating that the quantile function approached a uniform maximum entropy distribution. Intensive entropy of the probability density function (parishes categorized by cumulative case rate) increased from 0.63 nats (0.32–0.93 nats) to 1.75 nats (1.53–1.87 nats). The PDF approached a Gaussian distribution. The Kullback–Leibler divergence decreased from 0.84 nats (0.71–1.42 nats) to 0.12 nats (0.083–0.35 nats). These findings quantify how disease spreads and demonstrate that observed heterogeneity in infections between regions may in some circumstances be explained by chance alone.
+Precise modeling of epidemic spread is difficult. One explanation is that disease spread is inherently stochastic. This would suggest that the distribution of cases across geographic regions would progress towards that more favored by chance. If the epidemic proceeds long enough, the allocation of cases could approach that most expected, maximizing Boltzmann–Gibbs–Shannon entropy. We tested these hypotheses on mortality data from the Venetian 1630–1631 plague epidemic. Entropy per case (intensive) of the inverse cumulative density function (distribution of parishes ranked by case rates) increased from an effective number of 7.37 parishes (95% CI 3.51–12.44 parishes) to 48.7 parishes (48.2–49.2 parishes) out of 50 total, indicating that the inverse CDF approached a uniform maximum entropy distribution. Intensive entropy of the probability density function (parishes categorized by cumulative case rate) increased from 0.64 nats (0.36–0.96 nats) to 1.74 nats (1.49–1.85 nats). The PDF evolved towards a Gaussian distribution. The Kullback–Leibler divergence decreased from 0.85 nats (0.73–1.47 nats) to 0.18 nats (0.11–0.40 nats). These findings quantify how disease spreads and demonstrate that observed heterogeneity in infections between regions may in some circumstances be explained by chance alone.
 
 * Pre-print: https://www.medrxiv.org/content/10.1101/2025.10.06.25335371v2
 * Dataset: https://github.com/ggrrll/Venice-plague-epidemic-paper
 
-If you have any questions about the files in this repository, please contact Jonathan Hwang or Thomas Lietman at UCSF (jonathan.l.hwang@gmail.com; tom.lietman@ucsf.edu)
+If you have any questions about the files in this repository, please contact Jonathan Hwang or Thomas Lietman at UCSF (jonhwang@stanford.edu; tom.lietman@ucsf.edu)
 
 ## Setup
 
@@ -35,4 +35,5 @@ You can do this by opening the R project file (VenetianPlague_Entropy.Rproj) in 
 ## Contents
 
 * The main analysis: [Analysis.Rmd](Analysis.Rmd)
-* Exploratory analysis:
+* COVID exploratory analysis: [COVID_analysis.R](COVID_analysis.R)
+* Figures: [Figures_Final_v2](Figures_final_v2/)
