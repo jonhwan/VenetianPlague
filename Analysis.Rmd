@@ -83,7 +83,7 @@ Initialize the plot theme, the color palette, and the workbook for the source da
 ```{r initialize plot theme}
 Okabe_Ito_palette <- c("#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#CC79A7")
 
-plot_theme <- function(base_family = "Helvetica", base_size = 7) {
+plot_theme <- function(base_family = "sans", base_size = 7) {
   theme_classic(
     base_family = base_family,
     base_size = base_size
@@ -366,33 +366,34 @@ population_df %>%
   ggplot(aes(x = Population_1586, y = Population_1696))+
   geom_point(size = 0.5)+
   geom_smooth(method = lm, se = FALSE, linewidth = 0.5)+
-  theme_bw(base_family = "Helvetica", base_size = 7)+
+  theme_bw(base_family = "sans", base_size = 7)+
   labs(x = "Population in 1586", y = "Population in 1696", title = "Population in 1696 vs. Population in 1586") +
   plot_theme()
 
 # Save as Supplementary Figure 6
-ggsave(
-  filename = file.path(
-    "Figures_Final_v2",
-    "SuppFig6.pdf"
-  ),
-  width = 180,
-  height = 108,
-  units = "mm",
-  bg = "white"
-)
+# ggsave(
+#   filename = file.path(
+#     "Figures_Final_v2",
+#     "SuppFig6.pdf"
+#   ),
+#   width = 180,
+#   height = 108,
+#   units = "mm",
+#   device = cairo_pdf,
+#   bg = "white"
+# )
 
-ggsave(
-  filename = file.path(
-    "Figures_Final_v2",
-    "SuppFig6.png"
-  ),
-  width = 1920,
-  height = 1080,
-  units = "px",
-  dpi = 300,
-  bg = "white"
-)
+# ggsave(
+#   filename = file.path(
+#     "Figures_Final_v2",
+#     "SuppFig6.png"
+#   ),
+#   width = 180,
+#   height = 108,
+#   units = "mm",
+#   dpi = 300,
+#   bg = "white"
+# )
 ```
 
 Run a linear regression on the Venetian census data from 1696 vs. 1586 to determine the validity of using linear interpolation to estimate 1629 parish populations.
@@ -478,7 +479,7 @@ filled_1630 <- filled[year(filled$Date) == 1630,]
 filled_1631 <- filled[year(filled$Date) == 1631,]
 ```
 
-Finally, we figure out which parishes we will keep. The code below removes San Marco from our analysis because it served as a placeholder for deaths from drowning and those in prison, which resulted in an early spike in cases not representative of parish transmission. In our main analysis, we exclude it, but in the supplementary information, we include San Marco as a form of sensitivity analysis. The other two parishes we exclude are those which had no data during the primary outbreak window (9/1/30-12/31/30). 
+Finally, we figure out which parishes we will keep. The code below removes San Marco from our analysis because it served as a placeholder for deaths from drowning and those in prison, which resulted in an early spike in cases not representative of parish transmission. In our main analysis, we exclude it, but in the supplementary information, we include San Marco as a form of sensitivity analysis by changing the following line of code. The other two parishes we exclude are those which had no data during the primary outbreak window (9/1/30-12/31/30). 
 
 ```{r outlier_handling}
 outliers <- c("S.Polo", "S.Stae", "S.Marco") #No cases between 9/1/30 and 12/31/30, outbreak time
@@ -1102,27 +1103,29 @@ Finally, we run our bootstrap!
 RNGkind("L'Ecuyer-CMRG")
 set.seed(123)
 
-#stats_by_sestiere_boot_cumulative_50_2 <- shannonBySestiere_Bootstrapped(cumulative = TRUE) #w/ fixed negent
-#stats_by_sestiere_boot_instantaneous_50_2 <- shannonBySestiere_Bootstrapped(cumulative = FALSE)
+stats_by_sestiere_boot_cumulative_50_2 <- shannonBySestiere_Bootstrapped(cumulative = TRUE) #w/ fixed negent
+stats_by_sestiere_boot_instantaneous_50_2 <- shannonBySestiere_Bootstrapped(cumulative = FALSE)
 stats_by_sestiere_cumulative_50_2 <- shannonBySestiere(cumulative = TRUE)
 stats_by_sestiere_instantaneous_50_2 <- shannonBySestiere(cumulative = FALSE)
 stats_of_whole_cumulative_50_2 <- whole_dataset_analysis(cumulative = TRUE) #default
 stats_of_whole_instantaneous_50_2 <- whole_dataset_analysis(cumulative = FALSE)
-#stats_of_whole_boot_cumulative_50_2 <- whole_dataset_bootstrap(cumulative = TRUE)
-#stats_of_whole_boot_instantaneous_50_2 <- whole_dataset_bootstrap(cumulative = FALSE)
+stats_of_whole_boot_cumulative_50_2 <- whole_dataset_bootstrap(cumulative = TRUE)
+stats_of_whole_boot_instantaneous_50_2 <- whole_dataset_bootstrap(cumulative = FALSE)
 
 # Save our bootstrap values to a separate document
-# saveRDS(stats_by_sestiere_boot_cumulative_50_2,"sestiere_boot_cumulative.rds")
-# saveRDS(stats_by_sestiere_boot_instantaneous_50_2,"sestiere_boot_instantaneous.rds")
-# saveRDS(stats_of_whole_boot_cumulative_50_2,"whole_boot_cumulative.rds")
-# saveRDS(stats_of_whole_boot_instantaneous_50_2,"whole_boot_instantaneous.rds")
+saveRDS(stats_by_sestiere_boot_cumulative_50_2,"sestiere_boot_cumulative.rds")
+saveRDS(stats_by_sestiere_boot_instantaneous_50_2,"sestiere_boot_instantaneous.rds")
+saveRDS(stats_of_whole_boot_cumulative_50_2,"whole_boot_cumulative.rds")
+saveRDS(stats_of_whole_boot_instantaneous_50_2,"whole_boot_instantaneous.rds")
 ```
 
+Load the saved bootstrap values.
+
 ```{r load bootstrapping results}
-stats_by_sestiere_boot_cumulative_50_2 <- readRDS("sestiere_boot_cumulative.rds")
-stats_by_sestiere_instantaneous_50_2 <- readRDS("sestiere_boot_instantaneous.rds")
-stats_of_whole_boot_cumulative_50_2 <- readRDS("whole_boot_cumulative.rds")
-stats_of_whole_boot_instantaneous_50_2 <- readRDS("whole_boot_instantaneous.rds")
+# stats_by_sestiere_boot_cumulative_50_2 <- readRDS("sestiere_boot_cumulative.rds")
+# stats_by_sestiere_instantaneous_50_2 <- readRDS("sestiere_boot_instantaneous.rds")
+# stats_of_whole_boot_cumulative_50_2 <- readRDS("whole_boot_cumulative.rds")
+# stats_of_whole_boot_instantaneous_50_2 <- readRDS("whole_boot_instantaneous.rds")
 ```
 
 ## Evaluate Gaussian Distribution Entropy
@@ -1403,16 +1406,6 @@ for(i in 1:length(filled$Date)){
   non_zeroes_instantaneous[i] <- length(case_vec_instantaneous_norm_nonzeroes)
   eff_number_instantaneous[i] <- 1/sum(case_vec_instantaneous_norm_nonzeroes^2)
 }
-
-# Inverse Simpson's Index is Diversity with q = 2 while the Shannon Index is Diversity with q = 1
-# plot.ts(log(non_zeroes_cumulative),ylim=c(2,4),col="red")
-# lines(stats_of_whole_cumulative_50_2$shannonQuantile,col="black")
-# plot.ts(log(non_zeroes_instantaneous),ylim=c(0,4),col="red")
-# lines(stats_of_whole_instantaneous_50_2$shannonQuantile,col="black")
-# plot.ts(log(eff_number_cumulative),ylim=c(2,4),col="red")
-# lines(stats_of_whole_cumulative_50_2$shannonQuantile,col="black")
-# plot.ts(log(eff_number_instantaneous),ylim=c(0,4),col="red")
-# lines(stats_of_whole_instantaneous_50_2$shannonQuantile,col="black")
 ```
 
 # Figures
@@ -1451,13 +1444,11 @@ colnames(ent_plot_df_cumq) <- c("b1", "b2", "observed", "eff")
 
 ent_plot_cumq <- ggplot(data = ent_plot_df_cumq, aes(x = filled$Date, y = observed)) +
   geom_line() +
-  #geom_line(aes(y=rep(log(ncol(filled_modified[,-1])),length(filled$Date))),linetype="dashed")+
   geom_line(aes(y = rep(log(
     ncol(filled_modified[, -1])
   ), length(filled$Date))), col = "red") +
   geom_ribbon(aes(ymin = b1, ymax = b2), alpha = 0.5) +
-  #geom_line(aes(y=log(eff)),col="red")+
-  # coord_cartesian(ylim=c(3.5,3.95))+ #S. Marco
+  #coord_cartesian(ylim=c(3.5,3.95))+ #S. Marco
   coord_cartesian(ylim = c(3.5, 3.9)) +
   scale_x_date(date_breaks = "12 months", date_labels = "%m-%Y") +
   scale_y_continuous(
@@ -1488,7 +1479,7 @@ negent_plot_cumq <- ggplot(data = negent_plot_df_cumq, aes(x = filled$Date, y = 
   geom_ribbon(aes(ymin = b1, ymax = b2), alpha = 0.5) + #gray out 95% CI
   geom_line(aes(y = rep(0, length(filled$Date))), col = "red") + #create red line indicating minimum possible KL divergence
   coord_cartesian(ylim = c(0, 0.35)) +
-  # coord_cartesian(ylim = c(0, 0.5))+ #S. Marco
+  #coord_cartesian(ylim = c(0, 0.5))+ #S. Marco
   scale_x_date(date_breaks = "12 months", date_labels = "%m-%Y") +
   scale_y_continuous() +
   labs(y = "Negentropy (nats)", x = "Date", title = "Negentropy") +
@@ -1506,23 +1497,6 @@ untitled_grid_cumq <-
             label_y = 0.98,
             hjust = 0,
             vjust = 1)
-# # now add the title
-# title <- ggdraw() +
-#   draw_label(
-#     "Quantile Function of Cumulative Mortality",
-#     fontface = 'bold',
-#     fontfamily = "Helvetica",
-#     x = 0,
-#     hjust = 0
-#   ) +
-#   theme(# add margin on the left of the drawing canvas,
-#     # so title is aligned with left edge of first plot
-#     plot.margin = margin(0, 0, 0, 7))
-# plot_grid(title,
-#           untitled_grid,
-#           ncol = 1,
-#           # rel_heights values control vertical title margins
-#           rel_heights = c(0.1, 1))
 
 # Save figure
 
@@ -1554,29 +1528,31 @@ ggsave(
 
 # Save Supplementary Figure 4 if San Marco included
 
-#ggsave(
+# ggsave(
 #  filename = file.path(
 #    "Figures_Final_v2",
 #    "SuppFig4.pdf"
 #  ),
-#  width = 2100,
-#  height = 1200,
-#  units = "px",
-#  dpi = 300,
+#  plot = untitled_grid_cumq,
+#  width = 180,
+#  height = 108,
+#  units = "mm",
+#  device = cairo_pdf,
 #  bg = "white"
-#)
+# )
 
-#ggsave(
+# ggsave(
 #  filename = file.path(
 #    "Figures_Final_v2",
 #    "SuppFig4.png"
 #  ),
-#  width = 2100,
-#  height = 1200,
-#  units = "px",
+#  plot = untitled_grid_cumq,
+#  width = 180,
+#  height = 108,
+#  units = "mm",
 #  dpi = 300,
 #  bg = "white"
-#)
+# )
 ```
 
 Save data.
@@ -1635,13 +1611,10 @@ colnames(ent_plot_df_cumPDF) <- c("b1", "b2", "observed", "maximum")
 
 ent_plot_cumPDF <- ggplot(data = ent_plot_df_cumPDF, aes(x = filled$Date, y = observed)) +
   geom_line() +
-  #geom_line(aes(y = rep(log(ceiling(
-  #  log2(ncol(filled_modified[, -1])) #ceiling(log2(N) + 1) is the number of bins under Sturges' Rule
-  #) + 1), length(filled$Date))), col = "red") +
   geom_line(aes(y = maximum), col = "red") +
   geom_ribbon(aes(ymin = b1, ymax = b2), alpha = 0.5) +
   coord_cartesian(ylim = c(1, 2)) +
-  # coord_cartesian(ylim=c(0,2))+ #S. Marco
+  #coord_cartesian(ylim=c(0,2))+ #S. Marco
   scale_x_date(date_breaks = "12 months", date_labels = "%m-%Y") +
   scale_y_continuous() +
   labs(y = "Entropy (nats)", x = "Date", title = "Entropy") +
@@ -1660,30 +1633,14 @@ colnames(negent_plot_df_cumPDF) <- c("b1", "b2", "observed")
 
 negent_plot_cumPDF <- ggplot(data = negent_plot_df_cumPDF, aes(x = filled$Date, y = observed)) +
   geom_line() +
-  #geom_line(aes(y=funny_vec))+
   geom_ribbon(aes(ymin = b1, ymax = b2), alpha = 0.5) +
   geom_line(aes(y = rep(0, length(filled$Date))), col = "red") +
   coord_cartesian(ylim = c(0, 0.45)) +
-  # coord_cartesian(ylim=c(0,1.5))+ #S. Marco
+  #coord_cartesian(ylim=c(0,1.5))+ #S. Marco
   scale_x_date(date_breaks = "12 months", date_labels = "%m-%Y") +
   scale_y_continuous() +
-  #labs(y=expression(paste(D[KL]," (nats)")),x="Date",title="Negentropy")
   labs(y = "Negentropy (nats)", x = "Date", title = "Negentropy") +
   plot_theme()
-
-# Experimental Analysis: KL divergence of PDF from uniform (excluded in final paper)
-# plot_df_3 <- as.data.frame(cbind(stats_of_whole_boot_cumulative_50_2$b1[[5]],stats_of_whole_boot_cumulative_50_2$b2[[5]],stats_of_whole_cumulative_50_2$uniformKL_PDF))
-# colnames(plot_df_3) <- c("b1","b2","observed")
-# plot3 <- ggplot(data=plot_df_3,aes(x=filled$Date,y=observed))+
-#   geom_line()+
-#   geom_ribbon(aes(ymin=b1,ymax=b2),alpha=0.5)+
-#   coord_cartesian(ylim=c(0,1))+
-#   scale_x_date(date_breaks="12 months",date_labels="%m-%Y")+
-#   scale_y_continuous()+
-#   theme(plot.background=element_rect(fill="white"),axis.title=element_text(size=10))+
-#   labs(y="KL Divergence",x="Date",title="KL Divergence from Uniform")
-# plot_ls <- list(plot1,plot2,plot3)
-# untitled_grid <- plot_grid(plotlist=plot_ls,labels=c("A","B","C"),label_size=12)
 
 # Order such that entropy graph is on the left and KL divergence graph is on the right
 plot_ls_cumPDF <- list(ent_plot_cumPDF, negent_plot_cumPDF)
@@ -1697,25 +1654,6 @@ untitled_grid_cumPDF <-
             label_y = 0.98,
             hjust = 0,
             vjust = 1)
-
-# # Add the title
-# title <- ggdraw() +
-#   draw_label(
-#     "PDF of Cumulative Mortality",
-#     fontface = 'bold',
-#     fontfamily = "Helvetica",
-#     x = 0,
-#     hjust = 0
-#   ) +
-#   theme(# add margin on the left of the drawing canvas,
-#     # so title is aligned with left edge of first plot
-#     plot.margin = margin(0, 0, 0, 7))
-# 
-# plot_grid(title,
-#           untitled_PDF_grid,
-#           ncol = 1,
-#           # rel_heights values control vertical title margins
-#           rel_heights = c(0.1, 1))
 
 # Save the plot
 
@@ -1747,29 +1685,29 @@ ggsave(
 
 # Save as Supplementary Figure 5 if San Marco was included
 
-#ggsave(
+# ggsave(
 #  filename = file.path(
 #    "Figures_Final_v2",
 #    "SuppFig5.pdf"
 #  ),
-#  width = 2100,
-#  height = 1200,
-#  units = "px",
-#  dpi = 300,
+#  width = 180,
+#  height = 108,
+#  units = "mm",
+#  device = cairo_pdf,
 #  bg = "white"
-#)
-
-#ggsave(
+# )
+# 
+# ggsave(
 #  filename = file.path(
 #    "Figures_Final_v2",
 #    "SuppFig5.png"
 #  ),
-#  width = 2100,
-#  height = 1200,
-#  units = "px",
+#  width = 180,
+#  height = 108,
+#  units = "mm",
 #  dpi = 300,
 #  bg = "white"
-#)
+# )
 ```
 
 Save figure 3 data.
@@ -1864,7 +1802,6 @@ negent_plot_instq <- ggplot(data = negent_plot_df_instq, aes(x = filled$Date, y 
   scale_x_date(date_breaks = "12 months", date_labels = "%m-%Y") +
   scale_y_continuous() +
   expand_limits(y = c(0, 2)) +
-  #labs(y=expression(D[K*L]),x="Date",title="Negentropy")
   labs(y = "Negentropy (nats)", x = "Date", title = "Negentropy") +
   plot_theme()
 
@@ -1879,26 +1816,6 @@ untitled_grid_instq <-
             label_y = 0.98,
             hjust = 0,
             vjust = 1)
-
-# # Add the title
-# title <- ggdraw() +
-#   draw_label(
-#     "Quantile Function of Instantaneous Mortality",
-#     fontface = 'bold',
-#     fontfamily = "Helvetica",
-#     x = 0,
-#     hjust = 0
-#   ) +
-#   theme(# add margin on the left of the drawing canvas,
-#     # so title is aligned with left edge of first plot
-#     plot.margin = margin(0, 0, 0, 7))
-# 
-# # Create the grid 
-# plot_grid(title,
-#           untitled_grid,
-#           ncol = 1,
-#           # rel_heights values control vertical title margins
-#           rel_heights = c(0.1, 1))
 
 # Save the figure
 
@@ -1988,9 +1905,6 @@ ent_plot_instPDF <- ggplot(data = ent_plot_df_instPDF, aes(x = filled$Date, y = 
     ymax = b2
   ), alpha = 0.5) +
   geom_line(lwd = 0.25) +
-  #geom_line(aes(y = rep(log(ceiling(
-  #  log2(ncol(filled_modified[, -1]))
-  #) + 1), length(filled$Date))), col = "red") +
   geom_line(aes(y = maximum), col = "red") +
   scale_x_date(date_breaks = "12 months", date_labels = "%m-%Y") +
   scale_y_continuous() +
@@ -2023,20 +1937,10 @@ negent_plot_instPDF <- ggplot(data = negent_plot_df_instPDF, aes(x = filled$Date
   labs(y = "Negentropy (nats)", x = "Date", title = "Negentropy") +
   plot_theme()
 
-# Experimental Analysis: include KL divergence of the PDF from a uniform distribution (excluded in final paper)
-# plot_df_3 <- as.data.frame(cbind(stats_of_whole_boot_instantaneous_50_2$b1[[5]],stats_of_whole_boot_instantaneous_50_2$b2[[5]],stats_of_whole_instantaneous_50_2$uniformKL_PDF))
-# colnames(plot_df_3) <- c("b1","b2","observed")
-# plot3 <- ggplot(data=plot_df_3,aes(x=filled$Date,y=observed))+
-#   geom_ribbon(aes(x=filled$Date,ymin=b1,ymax=b2),alpha=0.5)+
-#   geom_line(lwd=0.25)+
-#   scale_x_date(date_breaks="12 months",date_labels="%m-%Y")+
-#   scale_y_continuous()+
-#   expand_limits(y=c(0,1.8))+
-#   theme(plot.background=element_rect(fill="white"),axis.title=element_text(size=10))+
-#   labs(y="KL Divergence",x="Date",title="KL Divergence from Uniform")
-
 # Order plots such that entropy graph is on the left and KL divergence graph is on the right
 plot_ls_instPDF <- list(ent_plot_instPDF, negent_plot_instPDF)
+
+# Create the grid
 
 untitled_grid_instPDF <-
   plot_grid(plotlist = plot_ls_instPDF,
@@ -2046,25 +1950,6 @@ untitled_grid_instPDF <-
             label_y = 0.98,
             hjust = 0,
             vjust = 1)
-
-# Add the title
-# title <- ggdraw() +
-#   draw_label(
-#     "PDF of Instantaneous Mortality",
-#     fontface = 'bold',
-#     x = 0,
-#     hjust = 0
-#   ) +
-#   theme(# add margin on the left of the drawing canvas,
-#     # so title is aligned with left edge of first plot
-#     plot.margin = margin(0, 0, 0, 7))
-# 
-# # Create the grid
-# plot_grid(title,
-#           untitled_grid,
-#           ncol = 1,
-#           # rel_heights values control vertical title margins
-#           rel_heights = c(0.1, 1))
 
 # Save the figure
 
@@ -2183,135 +2068,52 @@ for (s in unique(sestiere_df_modified$Sestiere)) {
 maxima_column <- rep(maxima_vec, nrow(filled_modified))
 plot_df$maxima <- maxima_column
 
-# figure4 <- ggplot(plot_df,
-#                   aes(
-#                     x = rep(filled$Date, each = 6),
-#                     group = series,
-#                     color = series,
-#                     fill = series
-#                   )) +
-#   geom_ribbon(aes(ymin = lower,
-#                   ymax = upper),
-#               alpha = 0.4,
-#               color = NA) +
-#   #geom_line(aes(y = lower), linetype = "dashed", linewidth = 0.25) + #use dashed line to indicate maximum since color is already being used
-#   #geom_line(aes(y = upper), linetype = "dashed", linewidth = 0.25) +
-#   geom_line(aes(y = observed), linewidth = 0.5, na.rm = TRUE) +
-#   geom_line(
-#     aes(y = maxima),
-#     linetype = "dashed",
-#     linewidth = 0.75,
-#     na.rm = TRUE,
-#     show.legend = FALSE
-#   ) +
-#   scale_color_manual(
-#     values = Okabe_Ito_palette
-#   ) +
-#   scale_fill_manual(
-#     values = Okabe_Ito_palette
-#   ) +
-#   coord_cartesian(ylim = c(0.5, 2.5)) +
-#   scale_y_continuous(
-#     name = "Entropy (nats)",
-#     # Create second axis for effective number
-#     sec.axis = sec_axis(
-#       trans =  ~ .,
-#       name = "Effective number of parishes",
-#       labels = function(x)
-#         scales::comma(exp(x), accuracy = 0.1)
-#     )
-#   ) +
-#   labs(
-#     #title = "Quantile Function of Cumulative Mortality by Sestiere",
-#     x = "Date",
-#     y = "Entropy (nats)",
-#     color = "Sestiere",
-#     fill = "Sestiere"
-#   ) +
-#   plot_theme()
-# Make the date explicit in the plotting dataframe
-plot_df <- plot_df %>%
-  mutate(Date = filled$Date[time])
-
-# One consistent colour per sestiere
-sestiere_colors <- setNames(
-  Okabe_Ito_palette,
-  levels(plot_df$series)
-)
-
-figure4 <- ggplot(
-  plot_df,
-  aes(x = Date, group = series)
-) +
-  geom_ribbon(
-    aes(ymin = lower, ymax = upper, fill = series),
-    alpha = 0.22,
-    colour = NA
-  ) +
-  geom_line(
-    aes(y = observed, color = series),
-    linewidth = 0.55
-  ) +
+figure4 <- ggplot(plot_df,
+                  aes(
+                    x = rep(filled$Date, each = 6),
+                    group = series,
+                    color = series,
+                    fill = series
+                  )) +
+  geom_ribbon(aes(ymin = lower,
+                  ymax = upper),
+              alpha = 0.4,
+              color = NA) +
+  #geom_line(aes(y = lower), linetype = "dashed", linewidth = 0.25) + #use dashed line to indicate maximum since color is already being used
+  #geom_line(aes(y = upper), linetype = "dashed", linewidth = 0.25) +
+  geom_line(aes(y = observed), linewidth = 0.5, na.rm = TRUE) +
   geom_line(
     aes(y = maxima),
-    colour = "black",
     linetype = "dashed",
-    linewidth = 0.4
-  ) +
-  facet_wrap(
-    vars(series),
-    ncol = 2
+    linewidth = 0.75,
+    na.rm = TRUE,
+    show.legend = FALSE
   ) +
   scale_color_manual(
-    values = sestiere_colors,
-    guide = "none"
+    values = Okabe_Ito_palette
   ) +
   scale_fill_manual(
-    values = sestiere_colors,
-    guide = "none"
+    values = Okabe_Ito_palette
   ) +
   coord_cartesian(ylim = c(0.5, 2.5)) +
   scale_y_continuous(
     name = "Entropy (nats)",
-    breaks = seq(0.5, 2.5, by = 0.5),
+    # Create second axis for effective number
     sec.axis = sec_axis(
-      trans= ~ .,
+      trans =  ~ .,
       name = "Effective number of parishes",
-      labels = function(x) {
-        scales::number(exp(x), accuracy = 0.1)
-      }
+      labels = function(x)
+        scales::comma(exp(x), accuracy = 0.1)
     )
   ) +
-  scale_x_date(
-    date_breaks = "1 year",
-    date_labels = "%Y",
-    expand = expansion(mult = c(0.01, 0.02))
+  labs(
+    #title = "Quantile Function of Cumulative Mortality by Sestiere",
+    x = "Date",
+    y = "Entropy (nats)",
+    color = "Sestiere",
+    fill = "Sestiere"
   ) +
-  labs(x = "Date") +
-  plot_theme() +
-  theme(
-    legend.position = "none",
-
-    strip.background = element_blank(),
-    strip.text = element_text(
-      family = "Helvetica",
-      size = 8,
-      face = "bold",
-      hjust = 0
-    ),
-
-    panel.spacing.x = grid::unit(5, "mm"),
-    panel.spacing.y = grid::unit(4, "mm"),
-
-    axis.title = element_text(
-      family = "Helvetica",
-      size = 8
-    ),
-    axis.text = element_text(
-      family = "Helvetica",
-      size = 7
-    )
-  )
+  plot_theme()
 
 # Save figure
 
@@ -2556,7 +2358,7 @@ make_map_panel <- function(map_data) {
     tm_layout(
       frame = FALSE,
       bg.color = "white",
-      text.fontfamily = "Helvetica",
+      text.fontfamily = "sans",
 
       # Add internal room around the map
       inner.margins = c(0.04, 0.04, 0.04, 0.04),
@@ -2583,13 +2385,13 @@ make_map <- function(map_data) {
         position = tm_pos_in("right", "top"),
         title.size = 0.65,
         text.size = 0.55,
-        title.fontfamily = "Helvetica",
-        text.fontfamily = "Helvetica",
+        title.fontfamily = "sans",
+        text.fontfamily = "sans",
         frame = FALSE
       )
     ) +
     tm_layout(
-      text.fontfamily = "Helvetica",
+      text.fontfamily = "sans",
       frame = FALSE,
       bg.color = "white",
       outer.margins = c(0, 0, 0, 0),
@@ -2666,8 +2468,8 @@ shared_legend_tm <- tm_shape(map_sf_list[[3]]) +
       orientation = "landscape",
       title.size = 0.60,
       text.size = 0.50,
-      title.fontfamily = "Helvetica",
-      text.fontfamily = "Helvetica",
+      title.fontfamily = "sans",
+      text.fontfamily = "sans",
       frame = FALSE
     ),
     col = NA
@@ -2675,7 +2477,7 @@ shared_legend_tm <- tm_shape(map_sf_list[[3]]) +
   tm_layout(
     legend.only = TRUE,
     frame = FALSE,
-    text.fontfamily = "Helvetica",
+    text.fontfamily = "sans",
     outer.margins = c(0, 0, 0, 0)
   )
 
@@ -2819,10 +2621,10 @@ for(i in 1:999) {
 }
 sort(coeff_var_mat[,1], decreasing = FALSE)[25] #January 7, 1629 low
 sort(coeff_var_mat[,1], decreasing = FALSE)[975] #January 7, 1629 high
-sort(coeff_var_mat[,2], decreasing = FALSE)[25] #December 31, 1631 low
-sort(coeff_var_mat[,2], decreasing = FALSE)[975] #December 31, 1631 high
-sort(coeff_var_mat[,3], decreasing = FALSE)[25] #October 31, 1630 low
-sort(coeff_var_mat[,3], decreasing = FALSE)[975] #October 31, 1630 high
+sort(coeff_var_mat[,2], decreasing = FALSE)[25] #October 31, 1630 low
+sort(coeff_var_mat[,2], decreasing = FALSE)[975] #October 31, 1630 high
+sort(coeff_var_mat[,3], decreasing = FALSE)[25]  #December 31, 1631 low
+sort(coeff_var_mat[,3], decreasing = FALSE)[975] #December 31, 1631 high
 ```
 
 Produce the graphs for the PDF and inverse CDF.
@@ -2842,11 +2644,6 @@ for(i in days_vec){
   pdf_vec <- as.numeric(PDF_approx_new(case_vec))
   normal <- normal_approx(case_vec)
   shannon_normal[match(i, days_vec)] <- -1 * sum(normal[normal != 0] * log(normal[normal != 0]))
-  
-  # plot(pdf_vec,main=paste(filled$Date[day],round(var_mean,3))) # PDF
-  # lines(normal_approx(case_vec),col="red")
-  # barplot(q_func) #quantile
-  # plot(PDF_approx_epanechnikov(case_vec))
   
   new_negent[match(i, days_vec)] <- negent_new(case_vec)
   old_negent[match(i, days_vec)] <- negent(case_vec)
@@ -3014,7 +2811,7 @@ figure1_final <- plot_grid(
   rel_heights = c(1.15, 1, 1),
   labels = c("a", "b", "c"),
   label_size = 8,
-  label_fontfamily = "Helvetica",
+  label_fontfamily = "sans",
   label_fontface = "bold",
   label_x = 0.01,
   label_y = 0.99,
@@ -3113,7 +2910,7 @@ addWorksheet(
 )
 
 section_style <- createStyle(
-  fontName = "Helvetica",
+  fontName = "sans",
   fontSize = 11,
   textDecoration = "bold",
   fgFill = "#D9EAF7",
@@ -3121,7 +2918,7 @@ section_style <- createStyle(
 )
 
 header_style <- createStyle(
-  fontName = "Helvetica",
+  fontName = "sans",
   fontSize = 10,
   textDecoration = "bold",
   fgFill = "#5B9BD5",
@@ -3305,8 +3102,8 @@ animation_tm <- tm_shape(animation_sf) +
       position = tm_pos_in("right", "top"),
       title.size = 0.75,
       text.size = 0.65,
-      title.fontfamily = "Helvetica",
-      text.fontfamily = "Helvetica",
+      title.fontfamily = "sans",
+      text.fontfamily = "sans",
       frame = FALSE
     ),
     col = "white",
@@ -3315,10 +3112,10 @@ animation_tm <- tm_shape(animation_sf) +
   tm_layout(
     frame = FALSE,
     bg.color = "white",
-    text.fontfamily = "Helvetica",
+    text.fontfamily = "sans",
     panel.show = TRUE,
     panel.label.size = 0.9,
-    panel.label.fontfamily = "Helvetica",
+    panel.label.fontfamily = "sans",
     panel.label.fontface = "plain",
     inner.margins = c(0.04, 0.15, 0.04, 0.04)
   ) +
@@ -3329,19 +3126,19 @@ animation_tm <- tm_shape(animation_sf) +
   )
 ```
 
-Create the plot.
+Save the plot.
 
-```{r plot supplementary figure 1}
-tmap_animation(
-  animation_tm,
-  filename = file.path(
-    "Figures_Final_v2",
-    "SupplementaryVideo1.mp4"
-  ),
-  width = 1920,
-  height = 1080,
-  dpi = 300
-)
+```{r save supplementary figure 1}
+# tmap_animation(
+#   animation_tm,
+#   filename = file.path(
+#     "Figures_Final_v2",
+#     "SupplementaryVideo1.mp4"
+#   ),
+#   width = 1920,
+#   height = 1080,
+#   dpi = 300
+# )
 ```
 
 ## Export Data
@@ -3406,11 +3203,11 @@ add_source_sheet(
   "SupplementaryFigure3Data"
 )
 
-saveWorkbook(
-  wb,
-  file.path("Figures_Final_v2", "Source Data.xlsx"),
-  overwrite = TRUE
-)
+# saveWorkbook(
+#   wb,
+#   file.path("Figures_Final_v2", "Source Data.xlsx"),
+#   overwrite = TRUE
+# )
 ```
 
 ## Supplementary Figure S7 (Mortality Graphs)
@@ -3476,28 +3273,28 @@ plot_grid(
 )
 
 # Save the figure
-ggsave(
-  filename = file.path(
-    "Figures_Final_v2",
-    "SuppFig7.pdf"
-  ),
-  width = 180,
-  height = 108,
-  units = "mm",
-  bg = "white"
-)
-
-ggsave(
-  filename = file.path(
-    "Figures_Final_v2",
-    "SuppFig7.png"
-  ),
-  width = 180,
-  height = 108,
-  units = "mm",
-  dpi = 300,
-  bg = "white"
-)
+# ggsave(
+#   filename = file.path(
+#     "Figures_Final_v2",
+#     "SuppFig7.pdf"
+#   ),
+#   width = 180,
+#   height = 108,
+#   units = "mm",
+#   bg = "white"
+# )
+# 
+# ggsave(
+#   filename = file.path(
+#     "Figures_Final_v2",
+#     "SuppFig7.png"
+#   ),
+#   width = 180,
+#   height = 108,
+#   units = "mm",
+#   dpi = 300,
+#   bg = "white"
+# )
 
 sestiere_vec <- c()
 for(i in unique(sestiere_df_modified$Sestiere)){
@@ -3925,7 +3722,6 @@ ggsave(filename = file.path(
   units = "px",
   bg = "white")
 
-# Publication-resolution raster version
 ggsave(
   filename = file.path(output_directory, "SuppFig10.tiff"),
   plot = binning_comparison_figure,
@@ -3937,17 +3733,16 @@ ggsave(
   bg = "white"
 )
 
-# PNG for manuscript draft
-ggsave(filename = file.path(
-    output_directory,
-    "SuppFig10.png"
-  ),
-  plot = binning_comparison_figure,
-  width = 2100,
-  height = 1500,
-  units = "px",
-  dpi = 300,
-  bg = "white")
+# ggsave(filename = file.path(
+#     output_directory,
+#     "SuppFig10.png"
+#   ),
+#   plot = binning_comparison_figure,
+#   width = 2100,
+#   height = 1500,
+#   units = "px",
+#   dpi = 300,
+#   bg = "white")
 ```
 
 Binning method had a significant impact on the entropy values obtained. However, binning method had minimal impact on negentropy estimates; regardless of the method used, negentropy starts low, increases until the primary outbreak, then drops and stays low for the rest of the epidemic.
@@ -4290,18 +4085,18 @@ ggsave(
   bg = "white"
 )
 
-ggsave(
-  filename = file.path(
-    "Figures_Final_v2",
-    "SuppFig9.pdf"
-  ),
-  plot = dynamic_comparison_starting_on_january_figure,
-  width = 2100,
-  height = 1200,
-  units = "px",
-  dpi = 300,
-  bg = "white"
-)
+# ggsave(
+#   filename = file.path(
+#     "Figures_Final_v2",
+#     "SuppFig9.pdf"
+#   ),
+#   plot = dynamic_comparison_starting_on_january_figure,
+#   width = 2100,
+#   height = 1200,
+#   units = "px",
+#   dpi = 300,
+#   bg = "white"
+# )
 ```
 
 Create quantile function entropy plot and PDF negentropy plot starting on September 1, 1630.
@@ -5191,31 +4986,31 @@ spatial_clustering_figure <- plot_grid(
 
 print(spatial_clustering_figure)
 
-ggsave(
-  filename = file.path(
-    "Figures_Final_v2",
-    "SuppFig8.pdf"
-  ),
-  plot = spatial_clustering_figure,
-  width = 12,
-  height = 8,
-  units = "in",
-  dpi = 300,
-  bg = "white"
-)
-
-ggsave(
-  filename = file.path(
-    "Figures_Final_v2",
-    "SuppFig8.png"
-  ),
-  plot = spatial_clustering_figure,
-  width = 12,
-  height = 8,
-  units = "in",
-  dpi = 300,
-  bg = "white"
-)
+# ggsave(
+#   filename = file.path(
+#     "Figures_Final_v2",
+#     "SuppFig8.pdf"
+#   ),
+#   plot = spatial_clustering_figure,
+#   width = 12,
+#   height = 8,
+#   units = "in",
+#   dpi = 300,
+#   bg = "white"
+# )
+# 
+# ggsave(
+#   filename = file.path(
+#     "Figures_Final_v2",
+#     "SuppFig8.png"
+#   ),
+#   plot = spatial_clustering_figure,
+#   width = 12,
+#   height = 8,
+#   units = "in",
+#   dpi = 300,
+#   bg = "white"
+# )
 ```
 
 ## Parish Population Estimation Method
